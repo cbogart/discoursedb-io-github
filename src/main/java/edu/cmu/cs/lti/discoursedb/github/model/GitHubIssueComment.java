@@ -1,4 +1,4 @@
-package edu.cmu.cs.lti.discoursedb.tutorial.model;
+package edu.cmu.cs.lti.discoursedb.github.model;
 
 import java.io.IOException;
 import java.util.ArrayList;

@@ -1,4 +1,4 @@
-package edu.cmu.cs.lti.discoursedb.tutorial.model;
+package edu.cmu.cs.lti.discoursedb.github.model;
 
 import static org.junit.Assert.assertEquals;
 
@@ -11,6 +11,8 @@ import org.junit.Test;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
+
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
 
 /**
  * Simple junit test case for the GitHub data model.

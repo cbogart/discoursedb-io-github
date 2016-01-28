@@ -7,7 +7,7 @@
 		<version>0.5-SNAPSHOT</version>
 		<relativePath>../discoursedb-parent</relativePath>
 	</parent>
-	<artifactId>discoursedb-tutorial-workshop</artifactId>
+	<artifactId>discoursedb-github-workshop</artifactId>
 	<dependencies>
 		<dependency>
 			<groupId>edu.cmu.cs.lti</groupId>
@@ -22,5 +22,5 @@
 			<artifactId>jackson-dataformat-csv</artifactId>
 		</dependency>
 	</dependencies>
-	<name>DiscourseDB Tutorial Project</name>
+	<name>DiscourseDB Github Converter</name>
 </project>

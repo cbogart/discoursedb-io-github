@@ -1,4 +1,4 @@
-package edu.cmu.cs.lti.discoursedb.tutorial.converter;
+package edu.cmu.cs.lti.discoursedb.github.converter;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -20,26 +20,26 @@ import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
-import edu.cmu.cs.lti.discoursedb.tutorial.model.GitHubIssueComment;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
 
 /**
- * This component will be discovered by the starter class <code>TutorialConverterApplication</code>.<br/>
+ * This component will be discovered by the starter class <code>GithubConverterApplication</code>.<br/>
  * Since this class implements CommandLineRuner, the <code>run</code> method will receive the args of the main method of the starter class.<br/>
  * 
  * The Order annotations is not necessary. It allows to specify the order of execution in case we have multiple components.
- * This class can directly access any DiscourseDB repositories and services by Autowiring them, but it is recommended to wrap all interactions in methods located in teh <code>TutorialConverterSetrvice</code> class, which is already autowired in this stub.
+ * This class can directly access any DiscourseDB repositories and services by Autowiring them, but it is recommended to wrap all interactions in methods located in teh <code>GithubConverterSetrvice</code> class, which is already autowired in this stub.
  * The main reason for this is that all calls to service methods will run in separate transactions.
  * 
  * @author Oliver Ferschke
  */
 @Component
 @Order(1)
-public class TutorialConverter implements CommandLineRunner {
+public class GithubConverter implements CommandLineRunner {
 
-	private static final Logger logger = LogManager.getLogger(TutorialConverter.class);	
+	private static final Logger logger = LogManager.getLogger(GithubConverter.class);	
 
 	@Autowired private DataSourceService dataSourceService;
-	@Autowired private TutorialConverterService converterService;
+	@Autowired private GithubConverterService converterService;
 
 	@Override
 	public void run(String... args) throws Exception {
@@ -51,8 +51,12 @@ public class TutorialConverter implements CommandLineRunner {
 			return;
 		}
 		
-		//Parse command line param with dataset location
-		final Path dataSetPath = Paths.get(args[1]);
+		//Parse command line param with dataset location. 
+		// Conventions:
+		//    issues/  contains issue conversations from github, and commits saved in issue0
+		//    githubarchive/  contains raw hourly githubarchive files (in .json.gz format)
+		//    mail_lists/  contains googlegroups or similar mailing list dumps
+		final Path dataSetPath = Paths.get(args[1] + "/issues");
 		File dataSetFile = dataSetPath.toFile();
 		if (!dataSetFile.exists() || dataSetFile.isFile() || !dataSetFile.canRead()) {
 			logger.error("Provided location is a file and not a directory.");
@@ -64,7 +68,7 @@ public class TutorialConverter implements CommandLineRunner {
 			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
 				pathStream.filter(path -> path.toFile().isFile())
 					 .filter(path -> !path.endsWith(".csv"))
-					 .forEach(path -> processFile(path.toFile()));
+					 .forEach(path -> processIssuesFile(path.toFile()));
 			}				
     	logger.info("All done.");
 	}
@@ -74,14 +78,22 @@ public class TutorialConverter implements CommandLineRunner {
 	 * 
 	 * @param file an dataset file to process
 	 */
-	private void processFile(File file){
-		logger.info("Processing "+file);				
+	private void processIssuesFile(File file){
+		logger.info("Processing "+file);
+		
    		try(InputStream in = new FileInputStream(file);) {
        		CsvMapper mapper = new CsvMapper();
        		CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
        		MappingIterator<GitHubIssueComment> it = mapper.readerFor(GitHubIssueComment.class).with(schema).readValues(in);
+       		boolean first = true;
        		while (it.hasNextValue()) {
        			GitHubIssueComment currentComment = it.next();
+       			if (first) {
+       				converterService.mapIssue(currentComment.getProjectOwner(), currentComment.getProjectName(), 
+       					currentComment.getIssueid());
+       				first = false;
+       			}
+       			converterService.mapEntities(currentComment);
        			//TODO pass each data point to the converterService which then performs the mapping in a transaction
        			//don't perform the mapping here directly, since it would not allow the transactions to be
        			//work properly
