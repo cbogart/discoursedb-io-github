@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.stream.Stream;
 
+import java.util.zip.GZIPInputStream;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,12 +17,16 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.MappingIterator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
+import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
 
 /**
  * This component will be discovered by the starter class <code>GithubConverterApplication</code>.<br/>
@@ -64,12 +70,17 @@ public class GithubConverter implements CommandLineRunner {
 		}
 		
 		//Walk through dataset directory and parse each file
-		logger.info("Start processing dataset");				
+		logger.info("Start processing issues");				
 			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
 				pathStream.filter(path -> path.toFile().isFile())
 					 .filter(path -> !path.endsWith(".csv"))
 					 .forEach(path -> processIssuesFile(path.toFile()));
 			}				
+		
+		logger.info("Start processing users");		
+			File usersFile = Paths.get(args[1] + "/derived/actor_info_2016.csv").toFile();
+			processUsersFile(usersFile);
+						
     	logger.info("All done.");
 	}
 
@@ -93,7 +104,7 @@ public class GithubConverter implements CommandLineRunner {
        					currentComment.getIssueid());
        				first = false;
        			}
-       			converterService.mapEntities(currentComment);
+       			converterService.mapIssueEntities(currentComment);
        			//TODO pass each data point to the converterService which then performs the mapping in a transaction
        			//don't perform the mapping here directly, since it would not allow the transactions to be
        			//work properly
@@ -104,4 +115,34 @@ public class GithubConverter implements CommandLineRunner {
        	}    		
 	}
 
+	
+	/**
+	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * 
+	 * @param file an dataset file to process
+	 */
+	private void processUsersFile(File file){
+		logger.info("Processing "+file);
+		
+   		try(InputStream in = new FileInputStream(file);) {
+   			
+       		CsvMapper mapper = new CsvMapper();
+       		CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+       		MappingIterator<GithubUserInfo> it = mapper.readerFor(GithubUserInfo.class).with(schema).readValues(in);
+       		boolean first = true;
+       		while (it.hasNextValue()) {
+       			GithubUserInfo currentUser = it.next();
+       			
+       			converterService.mapUserInfo(currentUser);
+        			
+       		}
+       	}catch(Exception e){
+       		logger.error("Could not parse data file "+file, e);
+       	}    		
+	}
+	
+
+
+	
+	
 }

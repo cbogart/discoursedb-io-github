@@ -69,12 +69,7 @@ public class GitHubIssueComment {
 	public void setProjectName(String projectName) {
 		this.projectName = projectName;
 	}
-	public String getActor() {
-		return actor;
-	}
-	public void setActor(String actor) {
-		this.actor = actor;
-	}
+	
 	public Date getTime() {
 		return time;
 	}
@@ -148,6 +143,14 @@ public class GitHubIssueComment {
 	}
 	public void setCode(String code) {
 		this.code = code;
+	}
+
+	public String getActor() {
+		return actor;
+	}
+
+	public void setActor(String actor) {
+		this.actor = actor;
 	}
 	
 	

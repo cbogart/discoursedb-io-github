@@ -1,5 +1,6 @@
 package edu.cmu.cs.lti.discoursedb.github.converter;
 
+import java.util.Date;
 import java.util.Optional;
 
 import org.apache.logging.log4j.LogManager;
@@ -24,6 +25,8 @@ import edu.cmu.cs.lti.discoursedb.core.type.ContributionTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartRelationTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartTypes;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
+import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
+import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
 
 /**
  * 
@@ -56,10 +59,29 @@ public class GithubConverterService{
 	public void mapIssue(String owner, String project, long IssueNum) {
 		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
 		DiscoursePart ownerDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, owner, DiscoursePartTypes.GITHUB_OWNER_REPOS);
-		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, project, DiscoursePartTypes.GITHUB_REPO);
+		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, owner + "/" + project, DiscoursePartTypes.GITHUB_REPO);
 		DiscoursePart issueDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, "Issue #" + IssueNum, DiscoursePartTypes.GITHUB_ISSUE);
 		discoursePartService.createDiscoursePartRelation(ownerDP, projectDP, DiscoursePartRelationTypes.SUBPART);
 		discoursePartService.createDiscoursePartRelation(projectDP, issueDP, DiscoursePartRelationTypes.SUBPART);
+	}
+
+	
+	/**
+	 * Maps a mailing list to DiscourseDB entities
+	 *  
+	 * @param owner
+	 * @param project
+	 * @param forumName
+	 */
+	public void mapForum(String owner, String project, String forumName, boolean internal) {
+		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
+		DiscoursePart forumDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, "Forum " + forumName, DiscoursePartTypes.FORUM);
+		if (internal) {
+			DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, owner + "/" + project, DiscoursePartTypes.GITHUB_REPO);
+			discoursePartService.createDiscoursePartRelation(projectDP, forumDP, DiscoursePartRelationTypes.SUBPART);
+		} 
+		// Note: if people in this project just kind of refer to a mailing list a lot, but it's not a part of the project,
+		// then for now I'm creating no formal relation.
 	}
 	
 	/**
@@ -68,7 +90,30 @@ public class GithubConverterService{
 	 * @param p the post object to map to DiscourseDB
 	 * @param dataSetName the name of the dataset the post was extracted from
 	 */
-	public void mapEntities(GitHubIssueComment p) {				
+	public void mapUserInfo(GithubUserInfo u) {	
+		// TO DO: treat differently if it's deleted or if type=organization
+		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
+
+		try {
+			User curUser = userService.createOrGetUser(curDiscourse, u.getLogin());
+			if (!u.getType().equals("deleted")) {
+				curUser.setLocation(u.getLocation());
+				curUser.setEmail(u.getEmail());
+				curUser.setRealname(u.getName());
+				curUser.setStartTime(u.getCreatedAt());
+			}		
+		} catch (Exception e) {
+			logger.trace("Error importing user info for " + u.getLogin() + ", " + e.getMessage());
+		}
+	}
+	
+	/**
+	 * Maps a post to DiscourseDB entities.
+	 * 
+	 * @param p the post object to map to DiscourseDB
+	 * @param dataSetName the name of the dataset the post was extracted from
+	 */
+	public void mapIssueEntities(GitHubIssueComment p) {				
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 		
 		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
@@ -113,5 +158,26 @@ public class GithubConverterService{
 		logger.trace("Post mapping completed.");
 	}
 
+	
+	/**
+	 * Maps a post to DiscourseDB entities.
+	 * 
+	 * @param p the post object to map to DiscourseDB
+	 * @param dataSetName the name of the dataset the post was extracted from
+	 * 
+	public void mapMailListEntities(MailingListComment p) {				
+		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
+		
+		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
+		DiscoursePart forumDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, "Forum " + p.getOutsideForum(), DiscoursePartTypes.FORUM);
+		String actorname = p.getAuthorName(); // THIS IS WRONG -- map to username first.
+		
+		
+
+				
+		logger.trace("Post mapping completed.");
+	}*/
+
+	
 
 }
