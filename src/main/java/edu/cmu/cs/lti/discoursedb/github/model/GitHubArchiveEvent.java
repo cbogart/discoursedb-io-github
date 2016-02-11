@@ -1,8 +1,11 @@
 package edu.cmu.cs.lti.discoursedb.github.model;
 
 import java.io.IOException;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
@@ -11,120 +14,48 @@ import org.apache.logging.log4j.Logger;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Simple PoJo to represent rows in GitHub issue extracts in CSV format.<br/>
- * Expects files with the following header:<br/>
- * <code>rectype,issueid,project_owner,project_name,actor,time,text,action,title,provenance,plus_1,urls,issues,userref,code</code><br/>
+ * Java object to represent GithubArchive rows, which could be events of several different
+ * types, and stored in different formats depending on the year.
  * 
- * @author Oliver Ferschke
+ * @author Chris Bogart
  *
  */
 public class GitHubArchiveEvent {
 
 	private static final Logger logger = LogManager.getLogger(GitHubArchiveEvent.class);	
+	private JsonNode props = null;
+	private static SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX");
 	
-	private String type;
-	private String actorName;
-	private String actorEmail;
-	private String repoName;
-	private String action;
-	private int contributionCount;
-	private ArrayList<String> contTitles;
-	private ArrayList<String> contBodies;
-	private ArrayList<String> contReferences;
-	private Date createdAt;
+	public GitHubArchiveEvent(JsonNode root) {
+		props = root;
+	}
 	
-	public GitHubArchiveEvent(){}
-
-	public String getType() {
-		return type;
+	public String getRecordType() { return props.get("type").asText(); }
+	private boolean style2013() { return props.get("actor").isTextual(); }
+	
+	public String toString() { return this.getRecordType() + " " + props.toString(); }
+	public String getActor() {
+		if (this.style2013()) {
+			return props.get("actor").asText();
+		} else {
+			return props.get("actor").get("login").asText();
+		}
 	}
-
-	public void setType(String type) {
-		this.type = type;
+	
+	public String getProjectFullName() {
+		if (this.style2013()) {
+			return props.get("repository").get("owner").asText() + "/" + props.get("repository").get("name").asText();
+		} else {
+			return props.get("repo").get("name").asText();
+		}
 	}
-
-	public String getActorEmail() {
-		return actorEmail;
+	
+	public Date getCreatedAt() throws ParseException {
+		return formatter.parse(props.get("created_at").asText());
 	}
-
-	@JsonProperty("actor_email")
-	public void setActorEmail(String actorEmail) {
-		this.actorEmail = actorEmail;
-	}
-
-	public String getActorName() {
-		return actorName;
-	}
-
-	@JsonProperty("actor_name")
-	public void setActorName(String actorName) {
-		this.actorName = actorName;
-	}
-
-	public int getContributionCount() {
-		return contributionCount;
-	}
-
-	@JsonProperty("contribution_count")
-	public void setContributionCount(int contributionCount) {
-		this.contributionCount = contributionCount;
-	}
-
-	public String getAction() {
-		return action;
-	}
-
-	public void setAction(String action) {
-		this.action = action;
-	}
-
-	public String getRepoName() {
-		return repoName;
-	}
-
-	@JsonProperty("repo_name")
-	public void setRepoName(String repoName) {
-		this.repoName = repoName;
-	}
-
-	public ArrayList<String> getContTitles() {
-		return contTitles;
-	}
-
-	@JsonProperty("cont_titles")
-	public void setContTitles(ArrayList<String> contTitles) {
-		this.contTitles = contTitles;
-	}
-
-	public ArrayList<String> getContBodies() {
-		return contBodies;
-	}
-
-	@JsonProperty("cont_bodies")
-	public void setContBodies(ArrayList<String> contBodies) {
-		this.contBodies = contBodies;
-	}
-
-	public ArrayList<String> getContReferences() {
-		return contReferences;
-	}
-
-	@JsonProperty("cont_references")
-	public void setContReferences(ArrayList<String> contReferences) {
-		this.contReferences = contReferences;
-	}
-
-	public Date getCreatedAt() {
-		return createdAt;
-	}
-
-	@JsonProperty("created_at")
-	public void setCreatedAt(Date createdAt) {
-		this.createdAt = createdAt;
-	}
-
 	
 }

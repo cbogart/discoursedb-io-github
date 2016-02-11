@@ -24,6 +24,7 @@ import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePart;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscourseRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.system.DataSourceInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteraction;
+import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteractionType;
 import edu.cmu.cs.lti.discoursedb.core.model.user.User;
 import edu.cmu.cs.lti.discoursedb.core.service.annotation.AnnotationService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContentService;
@@ -87,8 +88,9 @@ public class GithubConverterService{
 	 * @param actor
 	 * @param projectname (owner/repo)
 	 * @param when (date)
+	 * @param eventtype (kind of interaction)
 	 */
-	public void mapWatchEvent(String actor, String projectname, Date when) {
+	public void mapUserRepoEvent(String actor, String projectname, Date when, DiscoursePartInteractionTypes eventtype) {
 
 		// Only do this if EITHER the user OR the project are already in the database
 		
@@ -110,13 +112,13 @@ public class GithubConverterService{
 				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
 				annotationService.addAnnotation(projectDP, dgen);
 			}
-			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, DiscoursePartInteractionTypes.WATCH);
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, eventtype);
 			dpi.setStartTime(when);
 			
 		
 		}
 	}
-	
+
 
 	
 	/**
