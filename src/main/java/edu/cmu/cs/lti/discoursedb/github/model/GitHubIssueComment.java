@@ -70,6 +70,13 @@ public class GitHubIssueComment {
 		this.projectName = projectName;
 	}
 	
+	public String getIssueIdentifier() {
+		return "Issue " + getProjectFullName() + "#" + getIssueid();
+	}
+	public String getProjectFullName() {
+		return getProjectOwner() + "/" + getProjectName();
+	}
+	
 	public Date getTime() {
 		return time;
 	}
