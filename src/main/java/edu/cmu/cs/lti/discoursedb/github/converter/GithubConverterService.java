@@ -3,6 +3,7 @@ package edu.cmu.cs.lti.discoursedb.github.converter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Optional;
 
 import org.apache.logging.log4j.LogManager;
@@ -13,6 +14,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
+import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationInstance;
+import edu.cmu.cs.lti.discoursedb.core.model.annotation.Feature;
+import edu.cmu.cs.lti.discoursedb.core.model.annotation.FeatureType;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Content;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Contribution;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Discourse;
@@ -21,6 +25,7 @@ import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscourseRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.system.DataSourceInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteraction;
 import edu.cmu.cs.lti.discoursedb.core.model.user.User;
+import edu.cmu.cs.lti.discoursedb.core.service.annotation.AnnotationService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContentService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContributionService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.DiscoursePartService;
@@ -59,6 +64,7 @@ public class GithubConverterService{
 	@Autowired private ContributionService contributionService;
 	@Autowired private DiscoursePartService discoursePartService;
 	@Autowired private DataSourceService dataSourceService;
+	@Autowired private AnnotationService annotationService;
 	
 	/**
 	 * Maps a github Issue to DiscourseDB entities
@@ -88,18 +94,21 @@ public class GithubConverterService{
 		
 		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
 		
-		Optional<User> ifuser = userService.findUserByUsername(actor);
-		Optional<DiscoursePart> ifdp = discoursePartService.findOneDiscoursePartByName(projectname);
+		List<User> ifuser = userService.findUserByUsername(actor);
+		List<DiscoursePart> ifdp = discoursePartService.findAllByName(projectname);
 		
-		if (ifuser.isPresent() || ifdp.isPresent()) {
+		if (ifuser.size() > 0 || ifdp.size() > 0) {
 			User curUser = userService.createOrGetUser(curDiscourse, actor);
-			if (!ifuser.isPresent()) {
+			if (ifuser.size() == 0) {
 				// Mark as degenerate
-				
+				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
+				annotationService.addAnnotation(curUser, dgen);
 			}
 			DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
-			if (!ifdp.isPresent()) {
+			if (ifdp.size() == 0) {
 				// mark as degenerate
+				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
+				annotationService.addAnnotation(projectDP, dgen);
 			}
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, DiscoursePartInteractionTypes.WATCH);
 			dpi.setStartTime(when);
