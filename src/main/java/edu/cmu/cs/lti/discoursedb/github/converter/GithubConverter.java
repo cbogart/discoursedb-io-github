@@ -6,6 +6,10 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.SimpleDateFormat;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import java.util.zip.GZIPInputStream;
@@ -21,12 +25,14 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.type.MapType;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
 import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
+import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
 
 /**
  * This component will be discovered by the starter class <code>GithubConverterApplication</code>.<br/>
@@ -68,8 +74,12 @@ public class GithubConverter implements CommandLineRunner {
 			logger.error("Provided location is a file and not a directory.");
 			throw new RuntimeException("Can't read directory "+dataSetPath);
 		}
+
+		
+		
 		
 		//Walk through dataset directory and parse each file
+		
 		logger.info("Start processing issues");				
 			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
 				pathStream.filter(path -> path.toFile().isFile())
@@ -80,6 +90,27 @@ public class GithubConverter implements CommandLineRunner {
 		logger.info("Start processing users");		
 			File usersFile = Paths.get(args[1] + "/derived/actor_info_2016.csv").toFile();
 			processUsersFile(usersFile);
+			
+		logger.info("Start processing fora");
+			try (Stream<Path> pathStream = Files.walk(Paths.get(args[1] + "/mail_lists"))) {
+				pathStream.filter(path -> path.toFile().isFile())
+					 .filter(path -> !path.endsWith(".csv"))
+					 .forEach(path -> processForumFile(path.toFile()));
+			}				
+
+		logger.info("Reprocess fora to get thread links");
+			try (Stream<Path> pathStream = Files.walk(Paths.get(args[1] + "/mail_lists"))) {
+				pathStream.filter(path -> path.toFile().isFile())
+					 .filter(path -> !path.endsWith(".csv"))
+					 .forEach(path -> reprocessForumFileForRelationships(path.toFile()));
+			}				
+			
+		logger.info("Read githubarchive hour files");
+			try (Stream<Path> pathStream = Files.walk(Paths.get(args[1] + "/githubarchive"))) {
+				pathStream.filter(path -> path.toFile().isFile())
+					 .filter(path -> !path.endsWith(".json.gz"))
+					 .forEach(path -> processGithubarchiveHourFile(path.toFile()));
+			}				
 						
     	logger.info("All done.");
 	}
@@ -100,8 +131,7 @@ public class GithubConverter implements CommandLineRunner {
        		while (it.hasNextValue()) {
        			GitHubIssueComment currentComment = it.next();
        			if (first) {
-       				converterService.mapIssue(currentComment.getProjectOwner(), currentComment.getProjectName(), 
-       					currentComment.getIssueid());
+       				converterService.mapIssue(currentComment);
        				first = false;
        			}
        			converterService.mapIssueEntities(currentComment);
@@ -115,6 +145,54 @@ public class GithubConverter implements CommandLineRunner {
        	}    		
 	}
 
+	
+	/**
+	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * 
+	 * @param file an dataset file to process
+	 */
+	private void processGithubarchiveHourFile(File file){
+		logger.info("Processing "+file);
+		
+		SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX");
+        
+        try(InputStream in = new GZIPInputStream(new FileInputStream(file));) {
+   			final ObjectMapper mapper = new ObjectMapper();
+   			final MapType type = mapper.getTypeFactory().constructMapType(
+   			    Map.class, String.class, Object.class);
+   			
+   			try {  //http://stackoverflow.com/questions/10411020/jackson-multiple-objects-and-huge-json-files
+			   for (Iterator it = new ObjectMapper().readValues(new JsonFactory().createParser(in), type); it.hasNext(); ) {
+				   LinkedHashMap<String,Object> n = (LinkedHashMap<String,Object>)it.next();
+				   String recordtype = (String) n.get("type");
+				   
+				   switch (recordtype) {
+				   case "WatchEvent":
+					   if (n.get("actor").getClass().getName() == "java.lang.String") {    // 2013-2014
+						   LinkedHashMap<String,Object> repo = (LinkedHashMap<String,Object>)n.get("repository");
+					       converterService.mapWatchEvent(
+							   	(String)(n.get("actor")), 
+							   	(String)repo.get("owner") + "/" + (String)repo.get("name"),
+								formatter.parse((String)n.get("created_at")));
+					   
+					   } else {     // 2012 and 2015
+					       converterService.mapWatchEvent(
+							   	(String)((LinkedHashMap<String,Object>)n.get("actor")).get("login"), 
+								(String)((LinkedHashMap<String,Object>)n.get("repo")).get("name"),
+								formatter.parse((String)n.get("created_at")));
+					   }
+				   }
+			   }
+   				
+   			}
+   			finally { in.close(); }
+   			
+   			
+   			
+       	}catch(Exception e){
+       		logger.error("Could not parse data file "+file, e);
+       	}    		
+	}
 	
 	/**
 	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
@@ -141,8 +219,63 @@ public class GithubConverter implements CommandLineRunner {
        	}    		
 	}
 	
+	/**
+	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * 
+	 * @param file an dataset file to process
+	 */
+	private void processForumFile(File file){
+		// project_owner,project_name,outside_forum_id,unique_message_id,date,author_email,author_name,
+		//    title,body,response_to_message_id,thread_path,message_path
 
+		logger.info("Processing "+file);
+		
+   		try(InputStream in = new FileInputStream(file);) {
+       		CsvMapper mapper = new CsvMapper();
+       		CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 
+       		MappingIterator<MailingListComment> it = mapper.readerFor(MailingListComment.class).with(schema).readValues(in);
+       		boolean first = true;
+       		while (it.hasNextValue()) {
+       			MailingListComment currentPost = it.next();
+       			if (first) {
+       				converterService.mapForum(currentPost.getProjectOwner(), currentPost.getProjectName(), 
+       						currentPost.getFullForumName(), true);
+       				first = false;
+       			}
+       			converterService.mapForumPost(currentPost, "GOOGLE_GROUPS");        			
+       		}
+       		
+       	}catch(Exception e){
+       		logger.error("Could not parse data file "+file, e);
+       	}    		
+	}
+	
+	/**
+	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * 
+	 * @param file an dataset file to process
+	 */
+	private void reprocessForumFileForRelationships(File file){
+		// project_owner,project_name,outside_forum_id,unique_message_id,date,author_email,author_name,
+		//    title,body,response_to_message_id,thread_path,message_path
+
+		logger.info("Processing "+file);
+		
+   		CsvMapper mapper = new CsvMapper();
+   		CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+   		try(InputStream in = new FileInputStream(file);) {
+   		
+   			MappingIterator<MailingListComment> it = mapper.readerFor(MailingListComment.class).with(schema).readValues(in);
+       		while (it.hasNextValue()) {
+       			MailingListComment currentPost = it.next();	
+       			converterService.mapForumPostRelation(currentPost, "GOOGLE_GROUPS");        			
+       		}
+       	
+       	}catch(Exception e){
+       		logger.error("Could not parse data file "+file, e);
+       	}    		
+	}
 	
 	
 }
