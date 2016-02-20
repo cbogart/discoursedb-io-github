@@ -4,6 +4,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.apache.logging.log4j.LogManager;
@@ -16,7 +17,7 @@ import org.springframework.util.Assert;
 
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.Feature;
-import edu.cmu.cs.lti.discoursedb.core.model.annotation.FeatureType;
+//import edu.cmu.cs.lti.discoursedb.core.model.annotation.FeatureType;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Content;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Contribution;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Discourse;
@@ -24,7 +25,7 @@ import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePart;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscourseRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.system.DataSourceInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteraction;
-import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteractionType;
+//import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteractionType;
 import edu.cmu.cs.lti.discoursedb.core.model.user.User;
 import edu.cmu.cs.lti.discoursedb.core.service.annotation.AnnotationService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContentService;
@@ -67,6 +68,50 @@ public class GithubConverterService{
 	@Autowired private DataSourceService dataSourceService;
 	@Autowired private AnnotationService annotationService;
 	
+	private HashMap<String,Long> keyIndex = new HashMap<String,Long>();
+	private HashMap<String,Long> dpKeyIndex = new HashMap<String,Long>();
+	private HashMap<String,Long> userKeyIndex = new HashMap<String,Long>();
+	private Discourse theDiscourse = null;
+	private boolean globalTransaction = false;
+	
+	private Discourse getDiscourse(String name) {
+		if (theDiscourse == null || !globalTransaction) {
+			theDiscourse = discourseService.createOrGetDiscourse("Github");
+		} 
+		return theDiscourse;
+	}
+	private DiscoursePart getDiscoursePart(Discourse d, String name, DiscoursePartTypes typ) {
+		return discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
+		/*String lookupname = name + ":" + typ.toString();
+		Long ix = dpKeyIndex.get(lookupname);
+		if (ix == null) {
+			DiscoursePart dp = discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
+			if (dp != null) {
+				dpKeyIndex.put(lookupname, dp.getId() );
+			}
+			return dp;
+		} else {
+			return discoursePartService.findOneById(ix);
+			
+		}*/
+	}
+	private User getUser(Discourse d, String username) {
+		return userService.createOrGetUser(d, username);
+		/*
+		String lookupname =  username;
+		Long ix = userKeyIndex.get(lookupname);
+		if (ix == null) {
+			User u = userService.createOrGetUser(d, username);
+			if (u != null) {
+				userKeyIndex.put(lookupname,  u.getId());
+			}
+			return u;
+		} else {
+			return userService.findOneById(ix);
+		}*/
+	}
+	
+	
 	/**
 	 * Maps a github Issue to DiscourseDB entities
 	 *  
@@ -74,10 +119,10 @@ public class GithubConverterService{
 	 * 
 	 */
 	public void mapIssue(GitHubIssueComment p) { 
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-		DiscoursePart ownerDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, p.getProjectOwner(), DiscoursePartTypes.GITHUB_OWNER_REPOS);
-		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, p.getProjectFullName(), DiscoursePartTypes.GITHUB_REPO);
-		DiscoursePart issueDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart ownerDP = getDiscoursePart(curDiscourse, p.getProjectOwner(), DiscoursePartTypes.GITHUB_OWNER_REPOS);
+		DiscoursePart projectDP = getDiscoursePart(curDiscourse, p.getProjectFullName(), DiscoursePartTypes.GITHUB_REPO);
+		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
 		discoursePartService.createDiscoursePartRelation(ownerDP, projectDP, DiscoursePartRelationTypes.SUBPART);
 		discoursePartService.createDiscoursePartRelation(projectDP, issueDP, DiscoursePartRelationTypes.SUBPART);
 	}
@@ -94,7 +139,7 @@ public class GithubConverterService{
 
 		// Only do this if EITHER the user OR the project are already in the database
 		
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
+		Discourse curDiscourse = getDiscourse("Github");
 		
 		List<User> ifuser = userService.findUserByUsername(actor);
 		List<DiscoursePart> ifdp = discoursePartService.findAllByName(projectname);
@@ -119,6 +164,9 @@ public class GithubConverterService{
 		}
 	}
 
+	
+	
+
 
 	
 	/**
@@ -130,10 +178,11 @@ public class GithubConverterService{
 	 * @param internal    Does this mailing list really belong to the project?
 	 */
 	public void mapForum(String owner, String project, String fullForumName, boolean internal) {
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-		DiscoursePart forumDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, fullForumName, DiscoursePartTypes.FORUM);
+		logger.info("Adding forum " + fullForumName);
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart forumDP = getDiscoursePart(curDiscourse, fullForumName, DiscoursePartTypes.FORUM);
 		if (internal) {
-			DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, owner + "/" + project, DiscoursePartTypes.GITHUB_REPO);
+			DiscoursePart projectDP = getDiscoursePart(curDiscourse, owner + "/" + project, DiscoursePartTypes.GITHUB_REPO);
 			discoursePartService.createDiscoursePartRelation(projectDP, forumDP, DiscoursePartRelationTypes.SUBPART);
 		} else {
 			// Do nothing for now.
@@ -154,16 +203,22 @@ public class GithubConverterService{
 	public void mapForumPost(MailingListComment posting, String dataSourceName) {
 		// TODO: 2nd argument to findOneByDataSource should be a constant in an enum class
 		
+		
 		// don't let it get added twice
-		if (contributionService.findOneByDataSource(posting.getUniqueMessage(), "ggroups#unique_message", dataSourceName).isPresent()) {
-			logger.error("Not re-adding post " + posting.getUniqueMessage());
-			return;
+		// but scanning through all these is inefficient, so, maybe, actually, don't prevent this
+		if (keyIndex.containsKey(posting.getFullyQualifiedUniqueMessage())) {
+			logger.error("Not re-adding post " + posting.getFullyQualifiedUniqueMessage());
+			return;			
 		}
+		/*if (contributionService.findOneByDataSource(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", dataSourceName).isPresent()) {
+			logger.error("Not re-adding post " + posting.getFullyQualifiedUniqueMessage());
+			return;
+		}*/
 		
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-		DiscoursePart forumDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, posting.getFullForumName(), DiscoursePartTypes.FORUM);
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart forumDP = getDiscoursePart(curDiscourse, posting.getFullForumName(), DiscoursePartTypes.FORUM);
 		
-		User actor = userService.createOrGetUser(curDiscourse, posting.getAuthorNameAndEmail());
+		User actor = getUser(curDiscourse, posting.getAuthorNameAndEmail());
 		actor.setEmail(posting.getAuthorEmail());
 		actor.setRealname(posting.getAuthorName());
 		
@@ -181,7 +236,8 @@ public class GithubConverterService{
 		co.setCurrentRevision(k);
 		co.setFirstRevision(k);
 		co.setStartTime(posting.getDate());
-		dataSourceService.addSource(co,  new DataSourceInstance(posting.getUniqueMessage(), "ggroups#unique_message", DataSourceTypes.GITHUB, dataSourceName));
+		keyIndex.put(posting.getFullyQualifiedUniqueMessage(), co.getId());
+		dataSourceService.addSource(co,  new DataSourceInstance(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", DataSourceTypes.GITHUB, dataSourceName));
 		
 		//Add contribution to DiscoursePart
 		discoursePartService.addContributionToDiscoursePart(co, forumDP);
@@ -201,14 +257,26 @@ public class GithubConverterService{
 		if (posting.getResponseTo() == "") {
 			return;
 		}
-		Optional<Contribution> thispost = contributionService.findOneByDataSource(posting.getUniqueMessage(), "ggroups#unique_message", dataSourceName);
-		Optional<Contribution> parent = contributionService.findOneByDataSource(posting.getResponseTo(), "ggroups#unique_message", dataSourceName);
-		if (!parent.isPresent()) {
-			logger.error("Parent comment not found for forum " + posting.getOutsideForum() + " post " +  posting.getUniqueMessage());
+		//Optional<Contribution> thispost = contributionService.findOneByDataSource(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", dataSourceName);
+		//Optional<Contribution> parent = contributionService.findOneByDataSource(posting.getFullyQualifiedResponseTo(), "ggroups#unique_message", dataSourceName);
+		Long postid = keyIndex.get(posting.getFullyQualifiedUniqueMessage());
+		Long parentid = keyIndex.get(posting.getFullyQualifiedUniqueMessage());
+		if (postid == null || parentid == null) {
+			logger.error("Cannot find post and parent");
 			return;
 		}
+		try {
+			Optional<Contribution> thispost = contributionService.findOne(postid); 
+			Optional<Contribution> parent = contributionService.findOne(parentid);
+			if (!parent.isPresent() || !thispost.isPresent()) {
+				logger.error("Parent comment not found for " + posting.getFullyQualifiedUniqueMessage());
+				return;
+			}
 		
-  	    contributionService.createDiscourseRelation(parent.get(), thispost.get(), DiscourseRelationTypes.DESCENDANT);
+			contributionService.createDiscourseRelation(parent.get(), thispost.get(), DiscourseRelationTypes.DESCENDANT);
+		} catch (java.lang.IllegalArgumentException iae) {
+			logger.error("Mapping forum post to parent: " + iae);
+		}
 	}
 	
 	/**
@@ -219,10 +287,10 @@ public class GithubConverterService{
 	 */
 	public void mapUserInfo(GithubUserInfo u) {	
 		// TO DO: treat differently if it's deleted or if type=organization
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-
+		Discourse curDiscourse = getDiscourse("Github");
+		
 		try {
-			User curUser = userService.createOrGetUser(curDiscourse, u.getLogin());
+			User curUser = getUser(curDiscourse, u.getLogin());
 			if (!u.getType().equals("deleted")) {
 				curUser.setLocation(u.getLocation());
 				curUser.setEmail(u.getEmail());
@@ -235,6 +303,58 @@ public class GithubConverterService{
 		}
 	}
 	
+
+	/**
+	 * Maps a user's matrix factorization weights to features of an attribute
+	 * 
+	 * @param name: the user to attribute
+	 * @param factors: the factor weightings.
+	 * @param dataSetName the name of the dataset the post was extracted from
+	 */
+	public void mapUserFactors(String name, Map<String, String> factors) {
+		// TO DO: treat differently if it's deleted or if type=organization
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		try {
+			List<User> users = userService.findUserByUsername(name);
+			if (users.size() == 0) { return; }
+			User curUser = users.get(0);
+			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
+			annotationService.addAnnotation(curUser, a);
+			for(String factorname: factors.keySet()) {
+				Feature f = annotationService.createTypedFeature(factors.get(factorname), factorname);
+				annotationService.addFeature(a, f);;
+				
+			}
+		} catch (Exception e) {
+			logger.info("Error classifying user info for " + name + ", " + e.getMessage());
+		}
+		
+	}
+	/**
+	 * Maps a user's matrix factorization weights to features of an attribute
+	 * 
+	 * @param name: the user to attribute
+	 * @param factors: the factor weightings.
+	 * @param dataSetName the name of the dataset the post was extracted from
+	 */
+	public void mapProjectFactors(String name, Map<String, String> factors) {
+		//Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
+
+		try {
+			DiscoursePart dps = getDiscoursePart(getDiscourse("Github"), name, DiscoursePartTypes.GITHUB_REPO);
+			
+			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
+			for(String factorname: factors.keySet()) {
+				annotationService.addFeature(a, annotationService.createTypedFeature(factors.get(factorname), factorname));
+			}
+			annotationService.addAnnotation(dps, a);
+		} catch (Exception e) {
+			logger.trace("Error classifying project info for " + name + ", " + e.getMessage());
+		}
+		
+	}
+	
 	/**
 	 * Maps a post to DiscourseDB entities.
 	 * 
@@ -244,13 +364,13 @@ public class GithubConverterService{
 	public void mapIssueEntities(GitHubIssueComment p) {				
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 
-		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-		DiscoursePart issueDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
 		switch (p.getRectype()) {
 		case "issue_title": {
-			User actor = userService.createOrGetUser(curDiscourse, actorname);
+			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
@@ -267,12 +387,33 @@ public class GithubConverterService{
 		}
 		break;
 		case "issue_comment": {
-			User actor = userService.createOrGetUser(curDiscourse, p.getActor());
+			User actor = getUser(curDiscourse, p.getActor());
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
 			k.setText(p.getText());
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.POST);
+			co.setCurrentRevision(k);
+			co.setFirstRevision(k);
+			co.setStartTime(p.getTime());
+			/*Optional<Contribution> parent = contributionService.findOneByDataSource(p.getIssueIdentifier(), "github#issue", "GITHUB");
+			if (!parent.isPresent()) {
+				logger.error("cannot link to issue " + p.getIssueIdentifier());
+			}
+	  	    contributionService.createDiscourseRelation(parent.get(), co, DiscourseRelationTypes.DESCENDANT);
+*/
+			//Add contribution to DiscoursePart
+			discoursePartService.addContributionToDiscoursePart(co, issueDP);
+		}
+		break;  
+		/*//pull_request_commit_comment, pull_request_history, commit_messages, readme, issue_event
+		case "pull_request_commit_comment": {
+			User actor = userService.createOrGetUser(curDiscourse, p.getActor());
+			Content k = contentService.createContent();	
+			k.setAuthor(actor);
+			k.setStartTime(p.getTime());
+			k.setText(p.getText());
+			Contribution co = contributionService.createTypedContribution(ContributionTypes.COMMIT_COMMENT);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
@@ -284,7 +425,7 @@ public class GithubConverterService{
 
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
-		}
+		}*/
 		}
 		
 

@@ -85,6 +85,10 @@ public class MailingListComment {
 		this.outsideForum = outsideForum;
 	}
 
+	public String getFullyQualifiedUniqueMessage() {
+		return outsideForum + "#" + uniqueMessage;
+	}
+	
 	public String getUniqueMessage() {
 		return uniqueMessage;
 	}
@@ -124,6 +128,9 @@ public class MailingListComment {
 		this.body = body;
 	}
 
+	public String getFullyQualifiedResponseTo() {
+		return outsideForum + "#" + responseTo;
+	}
 	@JsonProperty("response_to_message_id")
 	public String getResponseTo() {
 		return responseTo;
