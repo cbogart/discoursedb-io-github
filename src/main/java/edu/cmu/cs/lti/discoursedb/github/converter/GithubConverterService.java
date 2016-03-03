@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -202,15 +203,14 @@ public class GithubConverterService{
 	 */
 	public void mapForumPost(MailingListComment posting, String dataSourceName) {
 		// TODO: 2nd argument to findOneByDataSource should be a constant in an enum class
-		
-		
+ 		
 		// don't let it get added twice
 		// but scanning through all these is inefficient, so, maybe, actually, don't prevent this
-		if (keyIndex.containsKey(posting.getFullyQualifiedUniqueMessage())) {
+		/*if (keyIndex.containsKey(posting.getFullyQualifiedUniqueMessage())) {
 			logger.error("Not re-adding post " + posting.getFullyQualifiedUniqueMessage());
 			return;			
 		}
-		/*if (contributionService.findOneByDataSource(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", dataSourceName).isPresent()) {
+		if (contributionService.findOneByDataSource(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", dataSourceName).isPresent()) {
 			logger.error("Not re-adding post " + posting.getFullyQualifiedUniqueMessage());
 			return;
 		}*/
@@ -225,7 +225,12 @@ public class GithubConverterService{
 		Content k = contentService.createContent();	
 		k.setAuthor(actor);
 		k.setStartTime(posting.getDate());
-		k.setTitle(posting.getTitle());
+		if (posting.getTitle() != null && posting.getTitle().length() > 255) {
+			logger.info("Title too long " + posting.getFullyQualifiedUniqueMessage() +  ": " + posting.getTitle() );
+			k.setTitle(posting.getTitle().substring(0, 254));
+		} else {
+			k.setTitle(posting.getTitle());
+		}
 		k.setText(posting.getBody());
 		Contribution co = null;
 		if (posting.getResponseTo() == "") {
@@ -260,9 +265,10 @@ public class GithubConverterService{
 		//Optional<Contribution> thispost = contributionService.findOneByDataSource(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", dataSourceName);
 		//Optional<Contribution> parent = contributionService.findOneByDataSource(posting.getFullyQualifiedResponseTo(), "ggroups#unique_message", dataSourceName);
 		Long postid = keyIndex.get(posting.getFullyQualifiedUniqueMessage());
-		Long parentid = keyIndex.get(posting.getFullyQualifiedUniqueMessage());
+		Long parentid = keyIndex.get(posting.getFullyQualifiedResponseTo());
 		if (postid == null || parentid == null) {
-			logger.error("Cannot find post and parent");
+			logger.error("ptrs are" + postid + ", " + parentid);
+			logger.error("Cannot find post and parent of " + posting.getFullyQualifiedUniqueMessage() + " parent " + posting.getFullyQualifiedResponseTo());
 			return;
 		}
 		try {
@@ -305,6 +311,37 @@ public class GithubConverterService{
 	
 
 	/**
+	 * Erases a user's matrix factorization
+	 * 
+	 * @param u   The user to have their attributes deleted
+	 */
+	public void deleteUserFactors(User u) {
+		
+		Set<AnnotationInstance> as = annotationService.findAnnotations(u);
+		for(AnnotationInstance a:as) {
+			if (a.getType() == "MATRIX_FACTORIZATION") {
+				annotationService.deleteAnnotation(a);
+			}
+		}
+	}	
+	
+	/**
+	 * Erases a project's matrix factorization
+	 * 
+	 * @param dp   The discoursePart to have its attributes deleted
+	 */
+	public void deleteProjectFactors(DiscoursePart dp) {
+		
+		Set<AnnotationInstance> as = annotationService.findAnnotations(dp);
+		for(AnnotationInstance a:as) {
+			if (a.getType() == "MATRIX_FACTORIZATION") {
+				annotationService.deleteAnnotation(a);
+			}
+		}
+	}	
+	
+	
+	/**
 	 * Maps a user's matrix factorization weights to features of an attribute
 	 * 
 	 * @param name: the user to attribute
@@ -313,12 +350,12 @@ public class GithubConverterService{
 	 */
 	public void mapUserFactors(String name, Map<String, String> factors) {
 		// TO DO: treat differently if it's deleted or if type=organization
-		Discourse curDiscourse = getDiscourse("Github");
 		
 		try {
 			List<User> users = userService.findUserByUsername(name);
 			if (users.size() == 0) { return; }
 			User curUser = users.get(0);
+			deleteUserFactors(curUser);
 			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
 			annotationService.addAnnotation(curUser, a);
 			for(String factorname: factors.keySet()) {
@@ -339,11 +376,10 @@ public class GithubConverterService{
 	 * @param dataSetName the name of the dataset the post was extracted from
 	 */
 	public void mapProjectFactors(String name, Map<String, String> factors) {
-		//Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
 
 		try {
 			DiscoursePart dps = getDiscoursePart(getDiscourse("Github"), name, DiscoursePartTypes.GITHUB_REPO);
-			
+			deleteProjectFactors(dps);
 			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
 			for(String factorname: factors.keySet()) {
 				annotationService.addFeature(a, annotationService.createTypedFeature(factors.get(factorname), factorname));
@@ -374,13 +410,19 @@ public class GithubConverterService{
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
-			k.setTitle(p.getTitle());
+			
+			if (p.getTitle() != null && p.getTitle().length() > 255) {
+				logger.info("Title too long " + p.getTitle() );
+				k.setTitle(p.getTitle().substring(0, 254));
+			} else {
+				k.setTitle(p.getTitle());
+			}
+			
 			k.setText(p.getText());
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.THREAD_STARTER);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
-			
 			dataSourceService.addSource(co, new DataSourceInstance(p.getIssueIdentifier(), "github#issue", DataSourceTypes.GITHUB, "GITHUB"));
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);

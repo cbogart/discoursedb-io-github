@@ -14,6 +14,9 @@ import java.util.stream.Stream;
 
 import java.util.zip.GZIPInputStream;
 
+import javax.persistence.EntityManager;
+import javax.persistence.PersistenceContext;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,9 +69,10 @@ public class GithubConverter implements CommandLineRunner {
 	@Autowired private DataSourceService dataSourceService;
 	@Autowired private GithubConverterService converterService;
 	@Autowired private Environment env;
+    @PersistenceContext
+    EntityManager entityManager;
 	
 	@Override
-	//@Transactional(propagation= Propagation.REQUIRED, readOnly=false)
 	public void run(String... args) throws Exception {
 
 		//Parse command line param with dataset name
@@ -110,14 +114,14 @@ public class GithubConverter implements CommandLineRunner {
 			File usersFile = Paths.get(env.getRequiredProperty("gitdata.actors")).toFile();
 			processUsersFile(usersFile);
 
-		/*logger.info("Add clustering annotations to users");
+		logger.info("Add clustering annotations to users");
 			File userFactorsFile = Paths.get(env.getRequiredProperty("gitdata.user_factors")).toFile();
 			processUserFactorsFile(userFactorsFile);
 			
 		logger.info("Add clustering annotations to projects");
 			File projectFactorsFile = Paths.get(env.getRequiredProperty("gitdata.project_factors")).toFile();
 			processProjectFactorsFile(projectFactorsFile);
-			*/
+			
 			
 		logger.info("Start processing fora");
 			try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.mail_lists")))) {
@@ -133,12 +137,12 @@ public class GithubConverter implements CommandLineRunner {
 					 .forEach(path -> reprocessForumFileForRelationships(path.toFile()));
 			}				
 		 
-		/*logger.info("Read githubarchive hour files");
+		logger.info("Read githubarchive hour files");
 		try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.githubarchive")))) {
 			pathStream.filter(path -> path.toFile().isFile())
 			.filter(path -> !path.endsWith(".json.gz"))
 			.forEach(path -> processGithubarchiveHourFile(path.toFile()));
-		}*/				
+		}			
 
 		logger.info("All done.");
 	}
@@ -179,6 +183,7 @@ public class GithubConverter implements CommandLineRunner {
 	 * @param file an dataset file to process
 	 */
 	private void processUserFactorsFile(File file){
+		
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
@@ -203,6 +208,7 @@ public class GithubConverter implements CommandLineRunner {
 	 * @param file an dataset file to process
 	 */
 	private void processProjectFactorsFile(File file){
+		
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
@@ -326,7 +332,7 @@ public class GithubConverter implements CommandLineRunner {
 		//    title,body,response_to_message_id,thread_path,message_path
 
 		logger.info("Processing "+file);
-
+		
 		try(InputStream in = new FileInputStream(file);) {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
@@ -340,7 +346,7 @@ public class GithubConverter implements CommandLineRunner {
 							currentPost.getFullForumName(), true);
 					first = false;
 				}
-				converterService.mapForumPost(currentPost, "GOOGLE_GROUPS");        			
+				converterService.mapForumPost(currentPost, "GOOGLE_GROUPS");    
 			}
 
 		}catch(Exception e){
