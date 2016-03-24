@@ -10,12 +10,11 @@ import java.text.SimpleDateFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import java.util.zip.GZIPInputStream;
 
-import javax.persistence.EntityManager;
-import javax.persistence.PersistenceContext;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -43,8 +42,10 @@ import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartInteractionTypes;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubArchiveEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubWatcherList;
 import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
 import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
+import edu.cmu.cs.lti.discoursedb.github.model.RevisionEvent;
 
 /**
  * This component will be discovered by the starter class <code>GithubConverterApplication</code>.<br/>
@@ -69,8 +70,6 @@ public class GithubConverter implements CommandLineRunner {
 	@Autowired private DataSourceService dataSourceService;
 	@Autowired private GithubConverterService converterService;
 	@Autowired private Environment env;
-    @PersistenceContext
-    EntityManager entityManager;
 	
 	@Override
 	public void run(String... args) throws Exception {
@@ -82,68 +81,107 @@ public class GithubConverter implements CommandLineRunner {
 			return;
 		}
 		
+		/*
+		 * For each entry in the custom.properties file, import the relevant
+		 * data iff the property exists, i.e. if a file name has been supplied.
+		 * This gives fine-grained control over what is imported.
+		 * 		
+		 */
+		if (env.containsProperty("gitdata.issues")) {
+			final Path dataSetPath = Paths.get(env.getRequiredProperty("gitdata.issues"));
+			File dataSetFile = dataSetPath.toFile();
+			if (!dataSetFile.exists() || dataSetFile.isFile() || !dataSetFile.canRead()) {
+				logger.error("Provided location (" + dataSetFile.getAbsolutePath() + ") is a file and not a directory.");
+				throw new RuntimeException("Can't read directory "+dataSetPath);
+			}
+			//Walk through dataset directory and parse each file
+	
+			logger.info("Start processing issues");			
+	
+			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
+				pathStream.filter(path -> path.toFile().isFile())
+				.filter(path -> !path.endsWith(".csv"))
+				.forEach(path -> processIssuesFile(path.toFile()));
+			}				
+		} else {
+			logger.info("No gitdata.issues in custom.properties");
+		}
 		
+		if (env.containsProperty("gitdata.actors")) {
+			logger.info("Start processing actors");		
+				File actorsFile = Paths.get(env.getRequiredProperty("gitdata.actors")).toFile();
+				processActorsFile(actorsFile);
+		} else {
+			logger.info("No gitdata.actors in custom.properties");
+		}
 		
-				
-		//Parse command line param with dataset location. 
-		// Conventions:
-		//    issues/  contains issue conversations from github, and commits saved in issue0
-		//    githubarchive/  contains raw hourly githubarchive files (in .json.gz format)
-		//    mail_lists/  contains googlegroups or similar mailing list dumps
-		//final Path dataSetPath = Paths.get(args[1] + "/issues");
-		final Path dataSetPath = Paths.get(env.getRequiredProperty("gitdata.issues"));
-		File dataSetFile = dataSetPath.toFile();
-		if (!dataSetFile.exists() || dataSetFile.isFile() || !dataSetFile.canRead()) {
-			logger.error("Provided location (" + dataSetFile.getAbsolutePath() + ") is a file and not a directory.");
-			throw new RuntimeException("Can't read directory "+dataSetPath);
+		if (env.containsProperty("gitdata.user_factors")) {
+			logger.info("Add clustering annotations to users");
+				File userFactorsFile = Paths.get(env.getRequiredProperty("gitdata.user_factors")).toFile();
+				processUserFactorsFile(userFactorsFile);
+		} else {
+			logger.info("no gitdata.user_factors in custom.properties");
+		}
+			
+		if (env.containsProperty("gitdata.project_factors")) {
+			logger.info("Add clustering annotations to projects");
+				File projectFactorsFile = Paths.get(env.getRequiredProperty("gitdata.project_factors")).toFile();
+				processProjectFactorsFile(projectFactorsFile);
+		} else {
+			logger.info("No gitdata.project_factors in custom.properties");
+		}
+	
+		if (env.containsProperty("gitdata.mail_lists")) {
+			logger.info("Start processing fora");
+				try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.mail_lists")))) {
+					pathStream.filter(path -> path.toFile().isFile())
+						 .filter(path -> !path.endsWith(".csv"))
+						 .forEach(path -> processForumFile(path.toFile()));
+				}				
+			logger.info("Reprocess fora to get thread links");
+				try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.mail_lists")))) {
+					pathStream.filter(path -> path.toFile().isFile())
+						 .filter(path -> !path.endsWith(".csv"))
+						 .forEach(path -> reprocessForumFileForRelationships(path.toFile()));
+				}				
+		} else {
+			logger.info("No gitdata.mail_lists in custom.properties");
+		}
+		
+
+		if (env.containsProperty("gitdata.githubarchive")) {
+			logger.info("Read githubarchive hour files");
+			Set<String> users = converterService.getNondegenerateUsers();
+			logger.info("   ...for " + users.size() + " users");
+			Set<String> projects = converterService.getNondegenerateProjects();
+			logger.info("   ...for " + projects.size() + " repositories");
+			try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.githubarchive")))) {
+				pathStream.filter(path -> path.toFile().isFile())
+				.filter(path -> !path.endsWith(".json.gz"))
+				.forEach(path -> processGithubarchiveHourFile(path.toFile(), users, projects));
+			}			
+		} else {
+			logger.info("No gitdata.githubarchive in custom.properties");
+		}
+		
+		if (env.containsProperty("gitdata.watchers")) {
+			logger.info("Add watch events to users and projects");
+				Set<String> users = converterService.getNondegenerateUsers();
+				logger.info("   ...for " + users.size() + " users");
+				Set<String> projects = converterService.getNondegenerateProjects();
+				logger.info("   ...for " + projects.size() + " repositories");
+				File watchersFile = Paths.get(env.getRequiredProperty("gitdata.watchers")).toFile();
+				processWatchersFile(watchersFile, users, projects);
+		} else {
+			logger.info("no gitdata.watchers in custom.properties");
 		}
 
-
-
-
-		//Walk through dataset directory and parse each file
-
-		logger.info("Start processing issues");				
-		try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
-			pathStream.filter(path -> path.toFile().isFile())
-			.filter(path -> !path.endsWith(".csv"))
-			.forEach(path -> processIssuesFile(path.toFile()));
-		}				
-				
-		logger.info("Start processing users");		
-			File usersFile = Paths.get(env.getRequiredProperty("gitdata.actors")).toFile();
-			processUsersFile(usersFile);
-
-		logger.info("Add clustering annotations to users");
-			File userFactorsFile = Paths.get(env.getRequiredProperty("gitdata.user_factors")).toFile();
-			processUserFactorsFile(userFactorsFile);
-			
-		logger.info("Add clustering annotations to projects");
-			File projectFactorsFile = Paths.get(env.getRequiredProperty("gitdata.project_factors")).toFile();
-			processProjectFactorsFile(projectFactorsFile);
-			
-			
-		logger.info("Start processing fora");
-			try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.mail_lists")))) {
-				pathStream.filter(path -> path.toFile().isFile())
-					 .filter(path -> !path.endsWith(".csv"))
-					 .forEach(path -> processForumFile(path.toFile()));
-			}				
-
-		logger.info("Reprocess fora to get thread links");
-			try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.mail_lists")))) {
-				pathStream.filter(path -> path.toFile().isFile())
-					 .filter(path -> !path.endsWith(".csv"))
-					 .forEach(path -> reprocessForumFileForRelationships(path.toFile()));
-			}				
-		 
-		logger.info("Read githubarchive hour files");
-		try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.githubarchive")))) {
-			pathStream.filter(path -> path.toFile().isFile())
-			.filter(path -> !path.endsWith(".json.gz"))
-			.forEach(path -> processGithubarchiveHourFile(path.toFile()));
-		}			
-
+		
+		if (env.containsProperty("gitdata.version_history")) {
+			logger.info("Read version history file");
+			File versionHistoryFile = Paths.get(env.getRequiredProperty("gitdata.version_history")).toFile();
+			processVersionHistoryFile(versionHistoryFile);
+		}
 		logger.info("All done.");
 	}
 
@@ -190,12 +228,23 @@ public class GithubConverter implements CommandLineRunner {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<Map<String,String>> it = mapper.readerFor(Map.class).with(schema).readValues(in);
+			boolean first = true;
 			while (it.hasNextValue()) {
 				Map<String,String> factors = it.next();
-				String name = factors.get("username");
-				factors.remove("username");
-				assert name != null : "Missing username in project_factors file";
-				converterService.mapUserFactors(name, factors);
+				String name = factors.remove("username");
+				assert name != null : "Missing username in user_factors file";
+				
+				String factorType = factors.remove("factorization_name");
+				assert factorType != null : "Missing factorization_name in user_factors file";
+				
+				String factorConfig = factors.remove("config");
+				assert factorConfig != null : "Missing config in user_factors file";
+				if (first) {
+					converterService.deleteFactorization(factorType);
+					first = false;
+				}
+
+				converterService.mapUserFactors(name, factorType, factorConfig, factors);
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
@@ -203,9 +252,83 @@ public class GithubConverter implements CommandLineRunner {
 	}
 
 	/**
-	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * Parses a pypi_versions.csv file and calls converterService to process it.  
 	 * 
-	 * @param file an dataset file to process
+	 * Example header plus one row:
+	 * 
+	 * project_owner,project_name,pypi_name,pypi_rawname,version,upload_time,python_version,filename
+	 * skwashd,python-acquia-cloud,acapi,acapi,0.4.1,2015-11-21 09:30:17,source,acapi-0.4.1.tar.gz
+	 * 
+	 * @param filename to process
+	 */
+	private void processVersionHistoryFile(File file) {
+		logger.info("Processing " + file);
+		try(InputStream in = new FileInputStream(file);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<RevisionEvent> it = mapper.readerFor(RevisionEvent.class).with(schema).readValues(in);
+			boolean first = true;
+			while (it.hasNextValue()) {
+				RevisionEvent revision = it.next();
+				converterService.mapVersionInfo(
+						revision.getProjectFullName(),
+						revision.getPypiName(),
+						revision.getVersion(), revision.getFilename() + "?" + revision.getPythonVersion(),
+						revision.getUploadTime()
+						);
+			}
+		} catch(Exception e){
+			logger.error("Could not parse data file "+file, e);
+		}  
+	}
+
+	/**
+	 * Parses a CSV file listing who watched what project when, 
+	 * binds its contents to a GitHubWatcherList object,
+	 * and passes it on to the DiscourseDB converter
+	 *
+	 * File format example:
+	 * 
+	 * actor,project,created_at
+	 * F21,danielstjules/Stringy,2015-01-01T00:01:53Z
+     * radlws,tomchristie/django-rest-framework,2015-01-01T00:05:29Z
+     * 
+	 * @param file a dataset file to process
+	 */
+	private void processWatchersFile(File file, Set<String> users, Set<String> projects){
+		logger.info("Processing "+file);
+
+		try(InputStream in = new FileInputStream(file);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubWatcherList> it = mapper.readerFor(GitHubWatcherList.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubWatcherList gwl = it.next();
+				converterService.mapUserRepoEvent(
+						gwl.getActor(), gwl.getProject(), gwl.getCreatedAt(),
+						DiscoursePartInteractionTypes.WATCH,
+						users, projects);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+file, e);
+		}    		
+		
+	}
+
+	/**
+	 * Parses a project_factors.csv file, 
+	 * binds its contents to a JsonNode and passes it on to the DiscourseDB converter
+	 * 
+	 * These represent a matrix factorization: the values of some arbitrary number of learned factors
+	 * associated with each project.  The number of factors is the same throughout the file, but
+	 * is not known at compile time.
+	 * 
+	 * Example lines from project_factors.csv file, in this example there are seven factors:
+	 * 
+	 * reponame,F1,F2,F3,F4,F5,F6,F7,factorization_name,config
+	 * 5monkeys/django-enumfield,0.031645,5.6692e-06,0,0.00021528,0,0,0,LogMatrixFactorization,project_factors.csv
+	 * 
+	 * @param file a dataset file to process
 	 */
 	private void processProjectFactorsFile(File file){
 		
@@ -215,25 +338,42 @@ public class GithubConverter implements CommandLineRunner {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<Map<String,String>> it = mapper.readerFor(Map.class).with(schema).readValues(in);
+			boolean first = true;
 			while (it.hasNextValue()) {
 				Map<String,String> factors = it.next();
-				String name = factors.get("reponame");
+				String name = factors.remove("reponame");
 				assert name != null : "Missing reponame in project_factors file";
-				factors.remove("reponame");
-				converterService.mapProjectFactors(name, factors);
+				
+				String factorType = factors.remove("factorization_name");
+				assert factorType != null : "Missing factorization_name in project_factors file";
+				
+				String factorConfig = factors.remove("config");
+				assert factorConfig != null : "Missing config in project_factors file";				
+				
+				if (first) {
+					converterService.deleteFactorization(factorType);
+					first = false;
+				}
+				converterService.mapProjectFactors(name, factorType, factorConfig, factors);
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
 		}    		
 	}
 
-
 	/**
-	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * Parses a dataset file, binds its contents to a JsonNode and passes it on to the DiscourseDB converter
+	 * Only imports records where EITHER the user or the project are in a set of users/projects of interest.
+	 * Unknown users associated with known projects, and unknown projects associated with known users, are
+	 * added to the database as "degenerate" entries.
 	 * 
-	 * @param file an dataset file to process
+	 * The input file is any standard hourly datafile downloaded from githubarchive.org
+	 * 
+	 * @param file       name of githubarchive file
+	 * @param users      Set of usernames whose activity is of interest.  
+	 * @param projects   Set of projects (string in owner/repo format) whose activity is of interest
 	 */
-	private void processGithubarchiveHourFile(File file){
+	private void processGithubarchiveHourFile(File file, Set<String> users, Set<String> projects){
 		logger.info("Processing "+file);
 
 
@@ -259,29 +399,34 @@ public class GithubConverter implements CommandLineRunner {
 						case "ForkEvent":
 							converterService.mapUserRepoEvent(
 									n.getActor(), n.getProjectFullName(), n.getCreatedAt(),
-									DiscoursePartInteractionTypes.FORK_FROM);
+									DiscoursePartInteractionTypes.FORK_FROM,
+									users, projects);
 							break;   
 						case "CommitCommentEvent":
 							break;
 						case "CreateEvent":
 							converterService.mapUserRepoEvent(
 									n.getActor(), n.getProjectFullName(), n.getCreatedAt(),
-									DiscoursePartInteractionTypes.CREATE);
+									DiscoursePartInteractionTypes.CREATE,
+									users, projects);
 							break;   
 						case "DeleteEvent":
 							converterService.mapUserRepoEvent(
 									n.getActor(), n.getProjectFullName(), n.getCreatedAt(),
-									DiscoursePartInteractionTypes.DELETE);
+									DiscoursePartInteractionTypes.DELETE, 
+									users, projects);
 							break;
 						case "WatchEvent":
 							converterService.mapUserRepoEvent(
 									n.getActor(), n.getProjectFullName(), n.getCreatedAt(),
-									DiscoursePartInteractionTypes.WATCH);
+									DiscoursePartInteractionTypes.WATCH,
+									users, projects);
 							break;
 
 						}
 					}  catch (Exception e) {
 						logger.error(n.toString());
+						e.printStackTrace();
 						logger.error(e);
 					}
 				}
@@ -298,11 +443,17 @@ public class GithubConverter implements CommandLineRunner {
 	}
 
 	/**
-	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
+	 * Parses a user information file, binds its contents to a POJO and passes it on to the DiscourseDB converter
 	 * 
-	 * @param file an dataset file to process
+	 * Sample rows from table:
+	 * 
+	 * location,login,name,email,company,email,blog,name,type,site_admin,bio,public_repos,public_gists,followers,following,created_at,updated_at,error
+     * Colombia,acala,Ariel Calderon,,ACala,,http://www.acala.co,Ariel Calderon,User,False,,2,0,0,0,2012-11-09T23:09:14Z,2016-01-29T14:28:57Z,
+     * "Rome, Italy",spork,Enrico Sporka,esporka@gmail.com,,esporka@gmail.com,http://spork.github.io,Enrico Sporka,User,False,,3,0,4,5,2015-07-25T10:02:08Z,2015-12-05T11:04:54Z,
+	 * 
+	 * @param file a file to process
 	 */
-	private void processUsersFile(File file){
+	private void processActorsFile(File file){
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
@@ -310,7 +461,6 @@ public class GithubConverter implements CommandLineRunner {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<GithubUserInfo> it = mapper.readerFor(GithubUserInfo.class).with(schema).readValues(in);
-			boolean first = true;
 			while (it.hasNextValue()) {
 				GithubUserInfo currentUser = it.next();
 

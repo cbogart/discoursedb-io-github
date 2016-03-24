@@ -1,7 +1,10 @@
 package edu.cmu.cs.lti.discoursedb.github.converter;
 
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +19,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
+import edu.cmu.cs.lti.discoursedb.core.model.TimedAnnotatableSourcedBE;
+import edu.cmu.cs.lti.discoursedb.core.model.TypedTimedAnnotatableSourcedBE;
+import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationAggregate;
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.Feature;
 //import edu.cmu.cs.lti.discoursedb.core.model.annotation.FeatureType;
@@ -128,6 +134,54 @@ public class GithubConverterService{
 		discoursePartService.createDiscoursePartRelation(projectDP, issueDP, DiscoursePartRelationTypes.SUBPART);
 	}
 	
+	/*
+	 * See if a database entity has a "Degenerate" annotation (meaning that we're not storing
+	 * general information about this person or project; it's just a placeholder to indicate they had
+	 * some interaction with an entity we do care about)
+	 * 
+	 * @param The User object to test
+	 */
+	public boolean isDegenerateU(TimedAnnotatableSourcedBE source) {
+		if (source == null || source.getAnnotations() == null || source.getAnnotations().getAnnotations() == null ) {
+			return false;
+		}
+		for (AnnotationInstance a : source.getAnnotations().getAnnotations()) {
+			if (a.getType() == "Degenerate") {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	/*
+	 * See if a database entity has a "Degenerate" annotation (meaning that we're not storing
+	 * general information about this person or project; it's just a placeholder to indicate they had
+	 * some interaction with an entity we do care about)
+	 * 
+	 * @param The DiscoursePart object to test
+	 */
+	public boolean isDegenerateDp(TypedTimedAnnotatableSourcedBE source) {
+		if (source == null || source.getAnnotations() == null || source.getAnnotations().getAnnotations() == null ) {
+			return false;
+		}
+		for (AnnotationInstance a : source.getAnnotations().getAnnotations()) {
+			if (a.getType() == "Degenerate") {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	public Set<String> getNondegenerateUsers() {
+		return userService.findUsersWithoutAnnotation("Degenerate");
+	}
+	public Set<String> getNondegenerateProjects() {
+		return discoursePartService.findDiscoursePartsWithoutAnnotation("Degenerate");		
+	}
+	
+	Set<String> alreadyDegenerateUser = new HashSet<String>();
+	Set<String> alreadyDegenerateProject = new HashSet<String>();
+	
 	/**
 	 * Records the time a user watched a repository
 	 *  
@@ -136,27 +190,31 @@ public class GithubConverterService{
 	 * @param when (date)
 	 * @param eventtype (kind of interaction)
 	 */
-	public void mapUserRepoEvent(String actor, String projectname, Date when, DiscoursePartInteractionTypes eventtype) {
+	public void mapUserRepoEvent(String actor, String projectname, Date when, DiscoursePartInteractionTypes eventtype,
+			Set<String> users, Set<String> projects) {
 
 		// Only do this if EITHER the user OR the project are already in the database
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		
-		List<User> ifuser = userService.findUserByUsername(actor);
-		List<DiscoursePart> ifdp = discoursePartService.findAllByName(projectname);
 		
-		if (ifuser.size() > 0 || ifdp.size() > 0) {
+		//List<User> ifuser = userService.findUserByUsername(actor);
+		//List<DiscoursePart> ifdp = discoursePartService.findAllByName(projectname);
+		
+		if (   users.contains(actor) ||  projects.contains(projectname) ) {
 			User curUser = userService.createOrGetUser(curDiscourse, actor);
-			if (ifuser.size() == 0) {
+			if (!users.contains(actor) && !alreadyDegenerateUser.contains(actor)) {
 				// Mark as degenerate
 				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
 				annotationService.addAnnotation(curUser, dgen);
+				alreadyDegenerateUser.add(actor);
 			}
 			DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
-			if (ifdp.size() == 0) {
+			if (!projects.contains(projectname) && !alreadyDegenerateProject.contains(projectname)) {
 				// mark as degenerate
 				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
 				annotationService.addAnnotation(projectDP, dgen);
+				alreadyDegenerateProject.add(projectname);
 			}
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, eventtype);
 			dpi.setStartTime(when);
@@ -309,55 +367,48 @@ public class GithubConverterService{
 		}
 	}
 	
+	
+	/**
+	 * Erases all annotations of type MATRIX_FACTORIZATION with a name feature matching the parameter
+	 * 
+	 * @param factorizationName   The name of the factorization
+	 */
+	public void deleteFactorization(String featureValue) {
+		String annotationType = "MATRIX_FACTORIZATION";
+		String featureType = "name";
+		List<AnnotationInstance> as = annotationService.findAnnotationsByFeatureTypeAndValue(featureType, featureValue);
+		for(AnnotationInstance a:as) {
+			if (a.getType() == annotationType) {
+				annotationService.deleteAnnotation(a);
+			}
+		}
+	}	
 
-	/**
-	 * Erases a user's matrix factorization
-	 * 
-	 * @param u   The user to have their attributes deleted
-	 */
-	public void deleteUserFactors(User u) {
-		
-		Set<AnnotationInstance> as = annotationService.findAnnotations(u);
-		for(AnnotationInstance a:as) {
-			if (a.getType() == "MATRIX_FACTORIZATION") {
-				annotationService.deleteAnnotation(a);
-			}
-		}
-	}	
 	
 	/**
-	 * Erases a project's matrix factorization
-	 * 
-	 * @param dp   The discoursePart to have its attributes deleted
-	 */
-	public void deleteProjectFactors(DiscoursePart dp) {
-		
-		Set<AnnotationInstance> as = annotationService.findAnnotations(dp);
-		for(AnnotationInstance a:as) {
-			if (a.getType() == "MATRIX_FACTORIZATION") {
-				annotationService.deleteAnnotation(a);
-			}
-		}
-	}	
-	
-	
-	/**
-	 * Maps a user's matrix factorization weights to features of an attribute
+	 * Maps a user's matrix factorization weights to features of an attribute.  The factorization is
+	 * the output of an algorithm that clusters users and projects into a small set of factors, that is, 
+	 * a small number of arbitrarily named features (e.g. F1, F2, etc).  Each user or project has
+	 * a vector of floats corresponding to each of the features.
 	 * 
 	 * @param name: the user to attribute
+	 * @param factorizationName: a user-friendly name for this factorization
+	 * @param factorConfig: the name of some file that defines how this factorization was done
 	 * @param factors: the factor weightings.
 	 * @param dataSetName the name of the dataset the post was extracted from
 	 */
-	public void mapUserFactors(String name, Map<String, String> factors) {
+	public void mapUserFactors(String name, String factorizationName, String factorConfig, Map<String, String> factors) {
 		// TO DO: treat differently if it's deleted or if type=organization
 		
 		try {
 			List<User> users = userService.findUserByUsername(name);
 			if (users.size() == 0) { return; }
 			User curUser = users.get(0);
-			deleteUserFactors(curUser);
 			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
 			annotationService.addAnnotation(curUser, a);
+			annotationService.addFeature(a,  annotationService.createTypedFeature(factorizationName, "name"));
+			dataSourceService.addSource(a, new DataSourceInstance(factorConfig + "#" + name, "factorization_config_file", DataSourceTypes.GITHUB, "GITHUB"));
+			
 			for(String factorname: factors.keySet()) {
 				Feature f = annotationService.createTypedFeature(factors.get(factorname), factorname);
 				annotationService.addFeature(a, f);;
@@ -368,6 +419,26 @@ public class GithubConverterService{
 		}
 		
 	}
+	
+	
+	public void mapVersionInfo(String repo, String nameInRepo, String version, String packageFile, Date updated) {
+		DateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		try {
+			Discourse discourse = getDiscourse("Github");
+			DiscoursePart dps = getDiscoursePart(discourse, repo, DiscoursePartTypes.GITHUB_REPO);
+			AnnotationInstance a = annotationService.createTypedAnnotation("REVISION");
+			annotationService.addAnnotation(dps, a);
+			annotationService.addFeature(a, annotationService.createTypedFeature(version, "version"));
+			annotationService.addFeature(a, annotationService.createTypedFeature(fmt.format(updated), "update_date"));
+			annotationService.addFeature(a, annotationService.createTypedFeature(packageFile, "update_file"));
+			dataSourceService.addSource(a, new DataSourceInstance("pypi_versions#" + packageFile, "versionfile", DataSourceTypes.GITHUB, "GITHUB" ));
+	
+		} catch (Exception e) {
+			logger.trace("Error classifying project info for " + repo + ", " + e.getMessage());
+		}
+	}
+	
+	
 	/**
 	 * Maps a user's matrix factorization weights to features of an attribute
 	 * 
@@ -375,12 +446,14 @@ public class GithubConverterService{
 	 * @param factors: the factor weightings.
 	 * @param dataSetName the name of the dataset the post was extracted from
 	 */
-	public void mapProjectFactors(String name, Map<String, String> factors) {
+	public void mapProjectFactors(String name, String factorizationName, String factorConfig, Map<String, String> factors) {
 
 		try {
 			DiscoursePart dps = getDiscoursePart(getDiscourse("Github"), name, DiscoursePartTypes.GITHUB_REPO);
-			deleteProjectFactors(dps);
 			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
+			annotationService.addAnnotation(dps, a);
+			annotationService.addFeature(a,  annotationService.createTypedFeature(factorizationName, "name"));
+			dataSourceService.addSource(a, new DataSourceInstance(factorConfig +"#" + name, "factorization_config_file", DataSourceTypes.GITHUB, "GITHUB"));
 			for(String factorname: factors.keySet()) {
 				annotationService.addFeature(a, annotationService.createTypedFeature(factors.get(factorname), factorname));
 			}
