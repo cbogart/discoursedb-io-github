@@ -173,10 +173,18 @@ public class GithubConverterService{
 	}
 	
 	public Set<String> getNondegenerateUsers() {
-		return userService.findUsersWithoutAnnotation("Degenerate");
+		Set<String> users = new HashSet<String>();
+		for (User u: userService.findUsersWithoutAnnotation("Degenerate")) {
+			users.add(u.getUsername());
+		}
+		return users;
 	}
 	public Set<String> getNondegenerateProjects() {
-		return discoursePartService.findDiscoursePartsWithoutAnnotation("Degenerate");		
+		Set<String> projects = new HashSet<String>();
+		for (DiscoursePart dp:  discoursePartService.findDiscoursePartsWithoutAnnotation("Degenerate")) {
+			projects.add(dp.getName());
+		}
+		return projects;
 	}
 	
 	Set<String> alreadyDegenerateUser = new HashSet<String>();
