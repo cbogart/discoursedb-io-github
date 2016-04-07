@@ -19,16 +19,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * @author Oliver Ferschke
  *
  */
-public class GitHubWatchEvent {
+public class GitHubGollumEvent {
 
-	private static final Logger logger = LogManager.getLogger(GitHubWatchEvent.class);	
+	private static final Logger logger = LogManager.getLogger(GitHubGollumEvent.class);	
 	
 	String eventType;
 	
 	String project;
 	String actor, userAuth, projectAuth;
 	Date createdAt;
+	String title;
 	String action;
+	String htmlUrl;
+	String sha;
+	String pageName;
+	String summary;
 	
 	public String getEventType() {
 		return eventType;
@@ -71,13 +76,43 @@ public class GitHubWatchEvent {
 	public void setCreatedAt(Date createdAt) {
 		this.createdAt = createdAt;
 	}
-	
+	public String getTitle() {
+		return title;
+	}
+	public void setTitle(String title) {
+		this.title = title;
+	}
 	public String getAction() {
 		return action;
 	}
 	public void setAction(String action) {
 		this.action = action;
 	}
-	
+	public String getHtmlUrl() {
+		return htmlUrl;
+	}
+	@JsonProperty("html_url")
+	public void setHtmlUrl(String htmlUrl) {
+		this.htmlUrl = htmlUrl;
+	}
+	public String getSha() {
+		return sha;
+	}
+	public void setSha(String sha) {
+		this.sha = sha;
+	}
+	@JsonProperty("page_name")
+	public String getPageName() {
+		return pageName;
+	}
+	public void setPageName(String pageName) {
+		this.pageName = pageName;
+	}
+	public String getSummary() {
+		return summary;
+	}
+	public void setSummary(String summary) {
+		this.summary = summary;
+	}
 	
 }

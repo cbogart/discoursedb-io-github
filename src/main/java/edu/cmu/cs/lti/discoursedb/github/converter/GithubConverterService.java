@@ -29,8 +29,10 @@ import edu.cmu.cs.lti.discoursedb.core.model.macro.Content;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Contribution;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Discourse;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePart;
+import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePartContribution;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscourseRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.system.DataSourceInstance;
+import edu.cmu.cs.lti.discoursedb.core.model.user.ContributionInteraction;
 import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteraction;
 //import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteractionType;
 import edu.cmu.cs.lti.discoursedb.core.model.user.User;
@@ -42,13 +44,21 @@ import edu.cmu.cs.lti.discoursedb.core.service.macro.DiscourseService;
 import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
 import edu.cmu.cs.lti.discoursedb.core.service.user.UserPredicates;
 import edu.cmu.cs.lti.discoursedb.core.service.user.UserService;
+import edu.cmu.cs.lti.discoursedb.core.type.ContributionInteractionTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.ContributionTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DataSourceTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartInteractionTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartRelationTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartTypes;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscourseRelationTypes;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubCommitCommentEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubCreateDeleteEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubExternalSite;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubForkEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubGollumEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubPullReqCommits;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubPushEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
 import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
 
@@ -89,33 +99,9 @@ public class GithubConverterService{
 	}
 	private DiscoursePart getDiscoursePart(Discourse d, String name, DiscoursePartTypes typ) {
 		return discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
-		/*String lookupname = name + ":" + typ.toString();
-		Long ix = dpKeyIndex.get(lookupname);
-		if (ix == null) {
-			DiscoursePart dp = discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
-			if (dp != null) {
-				dpKeyIndex.put(lookupname, dp.getId() );
-			}
-			return dp;
-		} else {
-			return discoursePartService.findOneById(ix);
-			
-		}*/
 	}
 	private User getUser(Discourse d, String username) {
 		return userService.createOrGetUser(d, username);
-		/*
-		String lookupname =  username;
-		Long ix = userKeyIndex.get(lookupname);
-		if (ix == null) {
-			User u = userService.createOrGetUser(d, username);
-			if (u != null) {
-				userKeyIndex.put(lookupname,  u.getId());
-			}
-			return u;
-		} else {
-			return userService.findOneById(ix);
-		}*/
 	}
 	
 	
@@ -172,6 +158,25 @@ public class GithubConverterService{
 		return false;
 	}
 	
+	public final String COMMIT_SHA = "owner/project#sha";
+	
+	/*
+	 * Retrieve the SHA values of all commits in the database, so when we
+	 * see references to them (pulls, pushes, commit comments) we can link
+	 * directly to the contribution id without having to query the database again
+	 */
+	public Map<String,Long> getCommitShas() {
+		HashMap<String,Long> shas = new HashMap<String,Long>();
+		for (Contribution c: contributionService.findAllByType(ContributionTypes.GIT_COMMIT_MESSAGE)) {
+			Optional<DataSourceInstance> ds = dataSourceService.findDataSource(c, COMMIT_SHA);
+			if (ds.isPresent()) {
+				shas.put(ds.get().getEntitySourceId(), c.getId());
+			}
+		}
+		return shas;
+	}
+
+	
 	public Set<String> getNondegenerateUsers() {
 		Set<String> users = new HashSet<String>();
 		for (User u: userService.findUsersWithoutAnnotation("Degenerate")) {
@@ -190,8 +195,29 @@ public class GithubConverterService{
 	Set<String> alreadyDegenerateUser = new HashSet<String>();
 	Set<String> alreadyDegenerateProject = new HashSet<String>();
 	
+	public User ensureUserExists(String actor, Set<String> users, Discourse curDiscourse) {
+		User curUser = userService.createOrGetUser(curDiscourse, actor);
+		if (!users.contains(actor) && !alreadyDegenerateUser.contains(actor)) {
+			// Mark as degenerate
+			AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
+			annotationService.addAnnotation(curUser, dgen);
+			alreadyDegenerateUser.add(actor);
+		}
+		return curUser;
+	}
+	public DiscoursePart ensureProjectExists(String projectname, Set<String> projects, Discourse curDiscourse) {
+		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
+		if (!projects.contains(projectname) && !alreadyDegenerateProject.contains(projectname)) {
+			// mark as degenerate
+			AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
+			annotationService.addAnnotation(projectDP, dgen);
+			alreadyDegenerateProject.add(projectname);
+		}
+		return projectDP;
+	}
+	
 	/**
-	 * Records the time a user watched a repository
+	 * Records the time a user did something associated with a repository
 	 *  
 	 * @param actor
 	 * @param projectname (owner/repo)
@@ -205,34 +231,163 @@ public class GithubConverterService{
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		
-		
-		//List<User> ifuser = userService.findUserByUsername(actor);
-		//List<DiscoursePart> ifdp = discoursePartService.findAllByName(projectname);
-		
 		if (   users.contains(actor) ||  projects.contains(projectname) ) {
-			User curUser = userService.createOrGetUser(curDiscourse, actor);
-			if (!users.contains(actor) && !alreadyDegenerateUser.contains(actor)) {
-				// Mark as degenerate
-				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
-				annotationService.addAnnotation(curUser, dgen);
-				alreadyDegenerateUser.add(actor);
-			}
-			DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
-			if (!projects.contains(projectname) && !alreadyDegenerateProject.contains(projectname)) {
-				// mark as degenerate
-				AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
-				annotationService.addAnnotation(projectDP, dgen);
-				alreadyDegenerateProject.add(projectname);
-			}
+			User curUser = ensureUserExists(actor, users, curDiscourse);
+			DiscoursePart projectDP = ensureProjectExists(projectname, projects, curDiscourse);
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, eventtype);
 			dpi.setStartTime(when);
-			
+		}
+	}
+	
+	
+	/**
+	 * Records the time a user did something associated with a repository
+	 *  
+	 * @param cde   Event object
+	 * @param users List of non-degenerate users
+	 * @param projects List of non-degenerate projects
+	 */
+	public void mapUserCreateDeleteEvent(GitHubCreateDeleteEvent cde,
+			Set<String> users, Set<String> projects) {
+
+		// Only do this if EITHER the user OR the project are already in the database
 		
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (   users.contains(cde.getActor()) ||  projects.contains(cde.getProject()) ) {
+			User curUser = ensureUserExists(cde.getActor(), users, curDiscourse);
+			DiscoursePart projectDP = ensureProjectExists(cde.getProject(), projects, curDiscourse);
+			DiscoursePartInteractionTypes dpitype = cde.getEventType() == "CreateEvent"?
+					DiscoursePartInteractionTypes.CREATE
+					:DiscoursePartInteractionTypes.DELETE;
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, dpitype);
+			if (cde.getWhat() != null) {
+				AnnotationInstance kind = annotationService.createTypedAnnotation("ArtifactAffected");
+				annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getWhat(), "ArtifactName"));
+				annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getWhatType(), "ArtifactType"));
+			}
+			dpi.setStartTime(cde.getCreatedAt());
+		}
+	}
+
+	/**
+	 * Records the time a user did something associated with a repository
+	 *  
+	 * @param fe   Event object
+	 * @param users List of non-degenerate users
+	 * @param projects List of non-degenerate projects
+	 */
+	public void mapUserForkEvent(GitHubForkEvent fe,
+			Set<String> users, Set<String> projects) {
+
+		// Only do this if EITHER the user OR the project are already in the database
+		
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (   users.contains(fe.getActor()) ||  projects.contains(fe.getProject()) ) {
+			User curUser = ensureUserExists(fe.getActor(), users, curDiscourse);
+			DiscoursePart projectDP = ensureProjectExists(fe.getProject(), projects, curDiscourse);
+			
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, 
+					DiscoursePartInteractionTypes.FORK_FROM);
+			if (fe.getForkedTo() != null) {
+				AnnotationInstance kind = annotationService.createTypedAnnotation("ForkedTo");
+				annotationService.addFeature(kind, annotationService.createTypedFeature(fe.getForkedTo(), "ForkedToProject"));
+			}
+			dpi.setStartTime(fe.getCreatedAt());
+		}
+	}
+	
+	/**
+	 * Records the time a user did something associated with a repository
+	 *  
+	 * @param fe   Event object
+	 * @param users List of non-degenerate users
+	 * @param projects List of non-degenerate projects
+	 * 
+	public void mapUserCommitMessageEvent(GitHubCommitCommentEvent cce,
+			Set<String> users, Set<String> projects) {
+
+		// Only do this if EITHER the user OR the project are already in the database
+		
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (   users.contains(fe.getActor()) ||  projects.contains(fe.getProject()) ) {
+			User curUser = ensureUserExists(fe.getActor(), users, curDiscourse);
+			DiscoursePart projectDP = ensureProjectExists(fe.getProject(), projects, curDiscourse);
+			
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, 
+					DiscoursePartInteractionTypes.FORK_FROM);
+			AnnotationInstance kind = annotationService.createTypedAnnotation("ForkedTo");
+			annotationService.addFeature(kind, annotationService.createTypedFeature(fe.getForkedTo(), "ForkedToProject"));
+			dpi.setStartTime(fe.getCreatedAt());
+		}
+	}*/
+
+	
+	/**
+	 * Records the time a user did something associated with a repository
+	 *  
+	 * @param fe   Event object
+	 * @param users List of non-degenerate users
+	 * @param projects List of non-degenerate projects
+	 */
+	public void mapCommitCommentEvent(GitHubCommitCommentEvent cce,
+			Set<String> users, Set<String> projects, Long contribution_id) {
+
+		// Only do this if EITHER the user OR the project are already in the database
+		
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (   users.contains(cce.getActor()) ||  projects.contains(cce.getProject()) ) {
+			User curUser = ensureUserExists(cce.getActor(), users, curDiscourse);
+			
+			Content k = contentService.createContent();	
+			k.setAuthor(curUser);
+			k.setStartTime(cce.getCreatedAt());
+			k.setText(cce.getCommitComment());
+			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
+			co.setCurrentRevision(k);
+			co.setFirstRevision(k);
+			co.setStartTime(cce.getCreatedAt());
+						
+			if (contribution_id != null) {
+				Optional<Contribution> appliesTo = contributionService.findOne(contribution_id);
+				if (appliesTo.isPresent()) {
+					contributionService.createDiscourseRelation(co, appliesTo.get(), DiscourseRelationTypes.REPLY);
+					for (DiscoursePartContribution dpc: appliesTo.get().getContributionPartOfDiscourseParts()) {
+						discoursePartService.addContributionToDiscoursePart(co, dpc.getDiscoursePart());
+					}
+				}
+			}
+			
+			// CURRENTLY: NO DATA SOURCE
 		}
 	}
 
 	
-	
+	/**
+	 * Records the time a user watched a repository
+	 *  
+	 * @param ges GitHubExternalSite object
+	 */
+	public void mapExternalSite(GitHubExternalSite ges) {
+
+		// Only do this if EITHER the user OR the project are already in the database
+		
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, ges.getProject(), DiscoursePartTypes.GITHUB_REPO);
+		AnnotationInstance extsite = annotationService.createTypedAnnotation("ExternalSite");
+		annotationService.addAnnotation(projectDP, extsite);
+		annotationService.addFeature(extsite,  annotationService.createTypedFeature(ges.getSiteType(), "external_site_type"));
+		annotationService.addFeature(extsite,  annotationService.createTypedFeature(ges.getStyle(), "external_site_style"));
+		annotationService.addFeature(extsite,  annotationService.createTypedFeature(ges.getCanonical(), "external_site_ident"));
+		annotationService.addFeature(extsite,  annotationService.createTypedFeature(ges.getUrl(), "url"));
+		
+		dataSourceService.addSource(extsite, new DataSourceInstance(ges.getUrl(), "external_site_url", DataSourceTypes.GITHUB, "GITHUB"));
+	}
+
+
 
 
 	
@@ -486,6 +641,27 @@ public class GithubConverterService{
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
 		switch (p.getRectype()) {
+		case "commit_messages": {
+			User actor = getUser(curDiscourse, actorname);
+			
+			Content k = contentService.createContent();	
+			k.setAuthor(actor);
+			k.setStartTime(p.getTime());
+			
+			if (p.getTitle() != null && p.getTitle().length() > 255) {
+				logger.info("Title too long " + p.getTitle() );
+				k.setTitle(p.getTitle().substring(0, 254));
+			} else {
+				k.setTitle(p.getTitle());
+			}
+			
+			k.setText(p.getText());
+			Contribution co = contributionService.createTypedContribution(ContributionTypes.GIT_COMMIT_MESSAGE);
+			co.setCurrentRevision(k);
+			co.setFirstRevision(k);
+			co.setStartTime(p.getTime());
+			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getProvenance(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+		}
 		case "issue_title": {
 			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
@@ -536,7 +712,7 @@ public class GithubConverterService{
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
 			k.setText(p.getText());
-			Contribution co = contributionService.createTypedContribution(ContributionTypes.COMMIT_COMMENT);
+			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
@@ -544,6 +720,7 @@ public class GithubConverterService{
 			if (!parent.isPresent()) {
 				logger.error("cannot link to issue " + p.getIssueIdentifier());
 			}
+			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getProvenance(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 	  	    contributionService.createDiscourseRelation(parent.get(), co, DiscourseRelationTypes.DESCENDANT);
 
 			//Add contribution to DiscoursePart
@@ -554,6 +731,95 @@ public class GithubConverterService{
 
 				
 		logger.trace("Post mapping completed.");
+	}
+	public void mapPushEvent(GitHubPushEvent pe, Set<String> users, Set<String> projects, Map<String, Long> commit_shas,
+			String[] shas) {
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (   users.contains(pe.getActor()) ||  projects.contains(pe.getProject()) ) {
+			User curUser = ensureUserExists(pe.getActor(), users, curDiscourse);
+			DiscoursePart curProject = ensureProjectExists(pe.getProject(), projects, curDiscourse);
+			DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, DiscoursePartTypes.GIT_PUSH);
+			curPush.setStartTime(pe.getCreatedAt());
+			
+			discoursePartService.createDiscoursePartRelation(curProject, curPush, DiscoursePartRelationTypes.SUBPART);
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, curProject, DiscoursePartInteractionTypes.GIT_PUSH);
+			for (String sha : shas) {
+				String source = pe.getProject() + "#" + sha;
+				if (commit_shas.containsKey(source)) {
+					Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(source));
+					if (appliesTo.isPresent()) {
+						discoursePartService.addContributionToDiscoursePart(appliesTo.get(), curPush);
+					}
+				}
+				
+			}
+			// CURRENTLY: NO DATA SOURCE
+		}		
+	}
+	public void mapPullRequestCommits(GitHubPullReqCommits prc, Set<String> users, Set<String> projects, Map<String,Long> commit_shas) {
+		Discourse curDiscourse = getDiscourse("Github");
+		
+		if (commit_shas.containsKey(prc.getFullName() + "#" + prc.getSha())) {
+			Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(prc.getFullName() + "#" + prc.getSha()));
+			if (appliesTo.isPresent() == false) {
+				logger.warn("Could not find pull request reference to project " + prc.getFullName() + " sha " + prc.getSha());
+			} else {
+				
+				//User committer = ensureUserExists(prc.getCommitter(), users, curDiscourse);
+				//User author = ensureUserExists(prc.getAuthor(), users, curDiscourse);
+				//DiscoursePart curProject = ensureProjectExists(prc.getFullName(), projects, curDiscourse);
+				DiscoursePart issueDP = getDiscoursePart(curDiscourse, prc.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
+				DiscoursePartContribution dpc = discoursePartService.addContributionToDiscoursePart(appliesTo.get(), issueDP);
+				dpc.setStartTime(prc.getCreatedAt());
+			}
+		}
+		// IGNORING AUTHOR AND COMMITTER FOR NOW
+		// NO DATA SOURCE		
+	}
+	
+	/*
+	 * Represent a unique wiki page or the like that can have
+	 * updates over time.
+	 */
+	public Map<String,Long> context_map = new HashMap<String,Long>();
+	
+	public void mapGollumEvent(GitHubGollumEvent ge, Set<String> users, Set<String> projects) {
+		Discourse curDiscourse = getDiscourse("Github");
+
+		if (   users.contains(ge.getActor()) ||  projects.contains(ge.getProject()) ) {
+			User curUser = ensureUserExists(ge.getActor(), users, curDiscourse);
+			DiscoursePart projectDP = ensureProjectExists(ge.getProject(), projects, curDiscourse);
+			DiscoursePart wikiDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, ge.getProject() + "/wiki", 
+					DiscoursePartTypes.GITHUB_WIKI);
+			Contribution con = null;
+			Content c = contentService.createContent();
+			c.setStartTime(ge.getCreatedAt());
+			if (!context_map.containsKey(ge.getHtmlUrl())) {
+				con = contributionService.createTypedContribution(ContributionTypes.WIKI_PAGE);
+				con.setStartTime(ge.getCreatedAt());
+				con.setFirstRevision(c);  // ASSUMPTION: they come in chronologically
+				AnnotationInstance ai = annotationService.createTypedAnnotation("URL_WITH_REVISIONS");
+				annotationService.addFeature(ai, annotationService.createTypedFeature(ge.getHtmlUrl(), "LOCAL_URL"));
+				dataSourceService.addSource(con, new DataSourceInstance(ge.getHtmlUrl() + "#" + ge.getSha(), 
+						"local_url#sha", DataSourceTypes.GITHUB, "GITHUB"));
+			} else {
+				con = contributionService.findOne(context_map.get(ge.getHtmlUrl())).get();
+				con.getCurrentRevision().setNextRevision(c);
+				con.getCurrentRevision().setEndTime(ge.getCreatedAt());
+				con.setCurrentRevision(c);
+			}
+
+			ContributionInteraction ci = userService.createContributionInteraction(curUser, con, ContributionInteractionTypes.EDIT);
+			ci.setStartTime(ge.getCreatedAt());
+			ci.setContent(c);
+			c.setAuthor(curUser);
+			c.setTitle(ge.getTitle());
+			c.setText(ge.getHtmlUrl());
+		}
+			
+		// IGNORING AUTHOR AND COMMITTER FOR NOW
+		// NO DATA SOURCE		
 	}
 
 	

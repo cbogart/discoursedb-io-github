@@ -41,8 +41,15 @@ import edu.cmu.cs.lti.discoursedb.configuration.BaseConfiguration;
 import edu.cmu.cs.lti.discoursedb.core.service.system.DataSourceService;
 import edu.cmu.cs.lti.discoursedb.core.type.DiscoursePartInteractionTypes;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubArchiveEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubCommitCommentEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubCreateDeleteEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubExternalSite;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubForkEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubGollumEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubIssueComment;
-import edu.cmu.cs.lti.discoursedb.github.model.GitHubWatcherList;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubPullReqCommits;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubPushEvent;
+import edu.cmu.cs.lti.discoursedb.github.model.GitHubWatchEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
 import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
 import edu.cmu.cs.lti.discoursedb.github.model.RevisionEvent;
@@ -148,13 +155,13 @@ public class GithubConverter implements CommandLineRunner {
 			logger.info("No gitdata.mail_lists in custom.properties");
 		}
 		
+		Set<String> users = converterService.getNondegenerateUsers();
+		logger.info("   ...for " + users.size() + " users");
+		Set<String> projects = converterService.getNondegenerateProjects();
+		logger.info("   ...for " + projects.size() + " repositories");
 
-		if (env.containsProperty("gitdata.githubarchive")) {
+		/*if (env.containsProperty("gitdata.githubarchive")) {
 			logger.info("Read githubarchive hour files");
-			Set<String> users = converterService.getNondegenerateUsers();
-			logger.info("   ...for " + users.size() + " users");
-			Set<String> projects = converterService.getNondegenerateProjects();
-			logger.info("   ...for " + projects.size() + " repositories");
 			try (Stream<Path> pathStream = Files.walk(Paths.get(env.getRequiredProperty("gitdata.githubarchive")))) {
 				pathStream.filter(path -> path.toFile().isFile())
 				.filter(path -> !path.endsWith(".json.gz"))
@@ -162,19 +169,46 @@ public class GithubConverter implements CommandLineRunner {
 			}			
 		} else {
 			logger.info("No gitdata.githubarchive in custom.properties");
-		}
+		}*/
 		
-		if (env.containsProperty("gitdata.watchers")) {
-			logger.info("Add watch events to users and projects");
-				Set<String> users = converterService.getNondegenerateUsers();
-				logger.info("   ...for " + users.size() + " users");
-				Set<String> projects = converterService.getNondegenerateProjects();
-				logger.info("   ...for " + projects.size() + " repositories");
-				File watchersFile = Paths.get(env.getRequiredProperty("gitdata.watchers")).toFile();
-				processWatchersFile(watchersFile, users, projects);
+		commit_shas = converterService.getCommitShas();
+		if (env.containsProperty("gitdata.pull_shas")) {
+			logger.info("Add links between pull requests and SHA keys");
+				File watchersFile = Paths.get(env.getRequiredProperty("gitdata.pull_shas")).toFile();
+				processPullShasFile(watchersFile, users, projects, commit_shas);
 		} else {
 			logger.info("no gitdata.watchers in custom.properties");
 		}
+
+		/* NB This will supercede the "gitdata.watchers" information above */
+		if (env.containsProperty("gitdata.project_events")) {
+			logger.info("Add events that concern users and projects");
+			File f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/commit_comment_events.csv").toFile();
+			processCommitCommentEvents(f, users, projects, commit_shas);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/push_events.csv").toFile();
+			processPushEvents(f, users, projects);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/create_events.csv").toFile();
+			processCreateDeleteEntity(f, users, projects);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/delete_events.csv").toFile();
+			processCreateDeleteEntity(f, users, projects);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/watch_events.csv").toFile();
+			processWatchEvent(f, users, projects);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/fork_events.csv").toFile();
+			processForkFile(f, users, projects);
+			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/wiki_events.csv").toFile();
+			processGollumFile(f, users, projects);
+		} else {
+			logger.info("no gitdata.project_events in custom.properties");
+		}
+
+		if (env.containsProperty("gitdata.external_sites")) {
+			logger.info("Add links to external sites associated with projects");
+				File externalSiteFile = Paths.get(env.getRequiredProperty("gitdata.external_sites")).toFile();
+				processExternalSitesFile(externalSiteFile, users, projects);
+		} else {
+			logger.info("no gitdata.external_sites in custom.properties");
+		}
+
 
 		
 		if (env.containsProperty("gitdata.version_history")) {
@@ -183,6 +217,102 @@ public class GithubConverter implements CommandLineRunner {
 			processVersionHistoryFile(versionHistoryFile);
 		}
 		logger.info("All done.");
+	}
+
+	private void processGollumFile(File f, Set<String> users, Set<String> projects) {
+		logger.info("Processing "+f);
+
+		try(InputStream in = new FileInputStream(f);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubGollumEvent> it = mapper.readerFor(GitHubGollumEvent.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubGollumEvent ge = it.next();
+				converterService.mapGollumEvent(ge,users, projects);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+f, e);
+		}    			
+	}
+
+	private void processForkFile(File f, Set<String> users, Set<String> projects) {
+		logger.info("Processing "+f);
+
+		try(InputStream in = new FileInputStream(f);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubForkEvent> it = mapper.readerFor(GitHubForkEvent.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubForkEvent cde = it.next();
+				converterService.mapUserForkEvent(cde,
+						users, projects);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+f, e);
+		}    		
+		
+		
+	}
+
+	private void processCreateDeleteEntity(File f, Set<String> users, Set<String> projects) {
+		logger.info("Processing "+f);
+
+		try(InputStream in = new FileInputStream(f);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubCreateDeleteEvent> it = mapper.readerFor(GitHubCreateDeleteEvent.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubCreateDeleteEvent cde = it.next();
+				converterService.mapUserCreateDeleteEvent(cde,
+						users, projects);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+f, e);
+		}    		
+		
+	}
+
+	private void processPushEvents(File f, Set<String> users, Set<String> projects) {
+		logger.info("Processing "+f + ", first for Commit messages... ");
+
+		try(InputStream in = new FileInputStream(f);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubPushEvent> it = mapper.readerFor(GitHubPushEvent.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubPushEvent pe = it.next();
+				if (pe.getShas() != null && pe.getShas().length() > 0) {
+					String [] shas = pe.getShas().split(";");
+					converterService.mapPushEvent(pe, users, projects, commit_shas, shas);
+				}
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+f, e);
+		}    		
+				
+	}
+
+	/* Map sha to contribution_id.  
+	 * The sha is for a commit, and the contribution_id is for the text of the commit message
+	 */
+	private Map<String,Long> commit_shas = new LinkedHashMap<String,Long>();
+	
+	private void processCommitCommentEvents(File f, Set<String> users, Set<String> projects, Map<String,Long> commit_shas) {
+		logger.info("Processing "+f + ", first for Commit messages... ");
+
+		try(InputStream in = new FileInputStream(f);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubCommitCommentEvent> it = mapper.readerFor(GitHubCommitCommentEvent.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubCommitCommentEvent cde = it.next();
+				converterService.mapCommitCommentEvent(cde,
+						users, projects, commit_shas.get(cde.getProject() + "#" + cde.getSha()));
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+f, e);
+		}    		
+		
 	}
 
 	/**
@@ -282,6 +412,7 @@ public class GithubConverter implements CommandLineRunner {
 		}  
 	}
 
+	
 	/**
 	 * Parses a CSV file listing who watched what project when, 
 	 * binds its contents to a GitHubWatcherList object,
@@ -295,19 +426,84 @@ public class GithubConverter implements CommandLineRunner {
      * 
 	 * @param file a dataset file to process
 	 */
-	private void processWatchersFile(File file, Set<String> users, Set<String> projects){
+	private void processWatchEvent(File file, Set<String> users, Set<String> projects){
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
-			MappingIterator<GitHubWatcherList> it = mapper.readerFor(GitHubWatcherList.class).with(schema).readValues(in);
+			MappingIterator<GitHubWatchEvent> it = mapper.readerFor(GitHubWatchEvent.class).with(schema).readValues(in);
 			while (it.hasNextValue()) {
-				GitHubWatcherList gwl = it.next();
+				GitHubWatchEvent gwl = it.next();
 				converterService.mapUserRepoEvent(
 						gwl.getActor(), gwl.getProject(), gwl.getCreatedAt(),
 						DiscoursePartInteractionTypes.WATCH,
 						users, projects);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+file, e);
+		}    		
+		
+	}
+	
+	/**
+	 * Parses a CSV file listing who watched what project when, 
+	 * binds its contents to a GitHubWatcherList object,
+	 * and passes it on to the DiscourseDB converter
+	 *
+	 * File format example:
+	 * 
+	 * actor,project,created_at
+	 * F21,danielstjules/Stringy,2015-01-01T00:01:53Z
+     * radlws,tomchristie/django-rest-framework,2015-01-01T00:05:29Z
+     * 
+	 * @param file a dataset file to process
+	 */
+	private void processPullShasFile(File file, Set<String> users, Set<String> projects, Map<String,Long> commit_shas){
+		logger.info("Processing "+file);
+
+		try(InputStream in = new FileInputStream(file);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubPullReqCommits> it = mapper.readerFor(GitHubPullReqCommits.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubPullReqCommits prc = it.next();
+				converterService.mapPullRequestCommits(prc, users, projects, commit_shas);
+			}
+		}catch(Exception e){
+			logger.error("Could not parse data file "+file, e);
+		}    		
+		
+	}
+
+	/**
+	 * Parses a CSV file listing external sites for each project 
+	 * binds its contents to a GitHubExternalSite object,
+	 * and passes it on to the DiscourseDB converter
+	 *
+	 * File format example:
+	 * 
+	 * project,site_type,style,canonical,consider_siblings,url
+	 * 5monkeys/django-enumfield,repository_listing,pypi,django-enumfield,http://pypi.python.org/pypi/django-enumfield
+	 * 
+	 * Fields:
+	 *   site_type: documentation, homepage, social, repository_listing
+     *   style: the format the page will be in.  "web" means any old format; others are more rigid arrangements
+     *   canonical: in rigid formats, the keywords that distinguish this project from others
+     *   url: a url.  This will also uniquely determine the local path of where this stuff is cached
+	 * 
+	 * @param file a file to process
+	 */
+	private void processExternalSitesFile(File file, Set<String> users, Set<String> projects){
+		logger.info("Processing "+file);
+
+		try(InputStream in = new FileInputStream(file);) {
+			CsvMapper mapper = new CsvMapper();
+			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			MappingIterator<GitHubExternalSite> it = mapper.readerFor(GitHubExternalSite.class).with(schema).readValues(in);
+			while (it.hasNextValue()) {
+				GitHubExternalSite ges = it.next();
+				converterService.mapExternalSite(ges);
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
@@ -372,7 +568,7 @@ public class GithubConverter implements CommandLineRunner {
 	 * @param file       name of githubarchive file
 	 * @param users      Set of usernames whose activity is of interest.  
 	 * @param projects   Set of projects (string in owner/repo format) whose activity is of interest
-	 */
+	 * 
 	private void processGithubarchiveHourFile(File file, Set<String> users, Set<String> projects){
 		logger.info("Processing "+file);
 
@@ -440,7 +636,7 @@ public class GithubConverter implements CommandLineRunner {
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
 		}    		
-	}
+	}*/
 
 	/**
 	 * Parses a user information file, binds its contents to a POJO and passes it on to the DiscourseDB converter

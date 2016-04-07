@@ -19,16 +19,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * @author Oliver Ferschke
  *
  */
-public class GitHubWatchEvent {
+public class GitHubForkEvent {
 
-	private static final Logger logger = LogManager.getLogger(GitHubWatchEvent.class);	
+	private static final Logger logger = LogManager.getLogger(GitHubForkEvent.class);	
 	
 	String eventType;
 	
 	String project;
 	String actor, userAuth, projectAuth;
 	Date createdAt;
-	String action;
+	String forkedTo;
 	
 	public String getEventType() {
 		return eventType;
@@ -71,13 +71,13 @@ public class GitHubWatchEvent {
 	public void setCreatedAt(Date createdAt) {
 		this.createdAt = createdAt;
 	}
-	
-	public String getAction() {
-		return action;
+	public String getForkedTo() {
+		return forkedTo;
 	}
-	public void setAction(String action) {
-		this.action = action;
+	@JsonProperty("forked_to")
+	public void setForkedTo(String forkedTo) {
+		this.forkedTo = forkedTo;
 	}
-	
+
 	
 }

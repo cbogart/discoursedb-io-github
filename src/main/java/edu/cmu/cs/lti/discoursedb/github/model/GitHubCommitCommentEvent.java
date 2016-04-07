@@ -19,16 +19,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * @author Oliver Ferschke
  *
  */
-public class GitHubWatchEvent {
+public class GitHubCommitCommentEvent {
 
-	private static final Logger logger = LogManager.getLogger(GitHubWatchEvent.class);	
+	private static final Logger logger = LogManager.getLogger(GitHubCommitCommentEvent.class);	
 	
 	String eventType;
-	
 	String project;
 	String actor, userAuth, projectAuth;
 	Date createdAt;
-	String action;
+	String commitComment;
+	String commitCommentUrl;
+	String sha;
 	
 	public String getEventType() {
 		return eventType;
@@ -37,6 +38,21 @@ public class GitHubWatchEvent {
 	public void setEventType(String eventType) {
 		this.eventType = eventType;
 	}
+	public String getCommitComment() {
+		return commitComment;
+	}
+	@JsonProperty("commit_comment")
+	public void setCommitComment(String commitComment) {
+		this.commitComment = commitComment;
+	}
+	public String getCommitCommentUrl() {
+		return commitCommentUrl;
+	}
+	@JsonProperty("commit_comment_url")
+	public void setCommitCommentUrl(String commitCommentUrl) {
+		this.commitCommentUrl = commitCommentUrl;
+	}
+
 	public String getProject() {
 		return project;
 	}
@@ -72,11 +88,11 @@ public class GitHubWatchEvent {
 		this.createdAt = createdAt;
 	}
 	
-	public String getAction() {
-		return action;
+	public String getSha() {
+		return sha;
 	}
-	public void setAction(String action) {
-		this.action = action;
+	public void setSha(String sha) {
+		this.sha = sha;
 	}
 	
 	

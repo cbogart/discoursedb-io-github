@@ -19,16 +19,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * @author Oliver Ferschke
  *
  */
-public class GitHubWatchEvent {
+public class GitHubCreateDeleteEvent {
 
-	private static final Logger logger = LogManager.getLogger(GitHubWatchEvent.class);	
+	private static final Logger logger = LogManager.getLogger(GitHubCreateDeleteEvent.class);	
 	
 	String eventType;
 	
 	String project;
 	String actor, userAuth, projectAuth;
 	Date createdAt;
-	String action;
+	String what;
+	String what_type;
 	
 	public String getEventType() {
 		return eventType;
@@ -71,12 +72,18 @@ public class GitHubWatchEvent {
 	public void setCreatedAt(Date createdAt) {
 		this.createdAt = createdAt;
 	}
-	
-	public String getAction() {
-		return action;
+	public String getWhat() {
+		return what;
 	}
-	public void setAction(String action) {
-		this.action = action;
+	public void setWhat(String what) {
+		this.what = what;
+	}
+	public String getWhatType() {
+		return what_type;
+	}
+	@JsonProperty("what_type")
+	public void setWhatType(String what_type) {
+		this.what_type = what_type;
 	}
 	
 	
