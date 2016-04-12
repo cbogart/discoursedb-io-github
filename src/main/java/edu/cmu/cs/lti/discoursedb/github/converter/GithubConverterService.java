@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +62,7 @@ import edu.cmu.cs.lti.discoursedb.github.model.GitHubPullReqCommits;
 import edu.cmu.cs.lti.discoursedb.github.model.GitHubPushEvent;
 import edu.cmu.cs.lti.discoursedb.github.model.GithubUserInfo;
 import edu.cmu.cs.lti.discoursedb.github.model.MailingListComment;
+
 
 /**
  * 
@@ -345,7 +347,16 @@ public class GithubConverterService{
 			Content k = contentService.createContent();	
 			k.setAuthor(curUser);
 			k.setStartTime(cce.getCreatedAt());
-			k.setText(cce.getCommitComment());
+			
+			//if (cc.contains("👍")) {
+			//	k.setText(StringEscapeUtils.escapeJava(cce.getCommitComment()));
+			//} else {
+			try {
+				k.setText(cce.getCommitComment());
+			} catch (Exception e) {
+				logger.error(e.toString() + ": " + cce.getCommitComment());
+				k.setText(StringEscapeUtils.escapeJava(cce.getCommitComment()));
+			}
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
