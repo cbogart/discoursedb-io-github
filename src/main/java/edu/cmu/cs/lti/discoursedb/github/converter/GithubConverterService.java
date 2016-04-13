@@ -798,7 +798,7 @@ public class GithubConverterService{
 				dpc.setStartTime(prc.getCreatedAt());
 			}
 		} else {
-			logger.warn("Could not find pull request reference to project; no match for " + prc.getFullName() + " sha " + prc.getSha());			
+			//logger.warn("Could not find pull request reference to project; no match for " + prc.getFullName() + " sha " + prc.getSha());			
 		}
 		// IGNORING AUTHOR AND COMMITTER FOR NOW
 		// NO DATA SOURCE		
