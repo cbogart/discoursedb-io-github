@@ -15,7 +15,7 @@ import java.util.stream.Stream;
 
 import java.util.zip.GZIPInputStream;
 
-
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -278,12 +278,17 @@ public class GithubConverter implements CommandLineRunner {
 		try(InputStream in = new FileInputStream(f);) {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
+			int rows = 0;
 			MappingIterator<GitHubPushEvent> it = mapper.readerFor(GitHubPushEvent.class).with(schema).readValues(in);
 			while (it.hasNextValue()) {
 				GitHubPushEvent pe = it.next();
 				if (pe.getShas() != null && pe.getShas().length() > 0) {
 					String [] shas = pe.getShas().split(";");
 					converterService.mapPushEvent(pe, users, projects, commit_shas, shas);
+				}
+				rows += 1;
+				if (rows%10000 == 0) {
+					logger.info("....read " + (rows*10000) + " out of about 234000000");
 				}
 			}
 		}catch(Exception e){
@@ -315,6 +320,8 @@ public class GithubConverter implements CommandLineRunner {
 		
 	}
 
+	
+	
 	/**
 	 * Parses a dataset file, binds its contents to a POJO and passes it on to the DiscourseDB converter
 	 * 
@@ -469,6 +476,7 @@ public class GithubConverter implements CommandLineRunner {
 			while (it.hasNextValue()) {
 				GitHubPullReqCommits prc = it.next();
 				converterService.mapPullRequestCommits(prc, users, projects, commit_shas);
+				
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);

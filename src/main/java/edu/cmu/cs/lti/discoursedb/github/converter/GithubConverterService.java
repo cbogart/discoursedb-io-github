@@ -325,7 +325,24 @@ public class GithubConverterService{
 			dpi.setStartTime(fe.getCreatedAt());
 		}
 	}*/
-
+	
+	//From http://stackoverflow.com/questions/14981109/checking-utf-8-data-type-3-byte-or-4-byte-unicode
+		public static boolean isEntirelyInBasicMultilingualPlane(String text) {
+		    for (int i = 0; i < text.length(); i++) {
+		        if (Character.isSurrogate(text.charAt(i))) {
+		            return false;
+		        }
+		    }
+		    return true;
+		}
+		public static String sanitizeUtf8mb4(String text) {
+			if (isEntirelyInBasicMultilingualPlane(text)) {
+				return text;
+			} else {
+				logger.info("Sanitizing " + text + " of utf8mb4 characters");
+				return StringEscapeUtils.escapeJava(text);
+			}
+		}
 	
 	/**
 	 * Records the time a user did something associated with a repository
@@ -351,12 +368,7 @@ public class GithubConverterService{
 			//if (cc.contains("👍")) {
 			//	k.setText(StringEscapeUtils.escapeJava(cce.getCommitComment()));
 			//} else {
-			try {
-				k.setText(cce.getCommitComment());
-			} catch (Exception e) {
-				logger.error(e.toString() + ": " + cce.getCommitComment());
-				k.setText(StringEscapeUtils.escapeJava(cce.getCommitComment()));
-			}
+			k.setText(sanitizeUtf8mb4(cce.getCommitComment()));
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
@@ -459,11 +471,11 @@ public class GithubConverterService{
 		k.setStartTime(posting.getDate());
 		if (posting.getTitle() != null && posting.getTitle().length() > 255) {
 			logger.info("Title too long " + posting.getFullyQualifiedUniqueMessage() +  ": " + posting.getTitle() );
-			k.setTitle(posting.getTitle().substring(0, 254));
+			k.setTitle(sanitizeUtf8mb4(posting.getTitle()).substring(0, 254));
 		} else {
-			k.setTitle(posting.getTitle());
+			k.setTitle(sanitizeUtf8mb4(posting.getTitle()));
 		}
-		k.setText(posting.getBody());
+		k.setText(sanitizeUtf8mb4(posting.getBody()));
 		Contribution co = null;
 		if (posting.getResponseTo() == "") {
 			co = contributionService.createTypedContribution(ContributionTypes.THREAD_STARTER);
@@ -661,12 +673,12 @@ public class GithubConverterService{
 			
 			if (p.getTitle() != null && p.getTitle().length() > 255) {
 				logger.info("Title too long " + p.getTitle() );
-				k.setTitle(p.getTitle().substring(0, 254));
+				k.setTitle(sanitizeUtf8mb4(p.getTitle()).substring(0, 254));
 			} else {
-				k.setTitle(p.getTitle());
+				k.setTitle(sanitizeUtf8mb4(p.getTitle()));
 			}
 			
-			k.setText(p.getText());
+			k.setText(sanitizeUtf8mb4(p.getText()));
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.GIT_COMMIT_MESSAGE);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
@@ -681,12 +693,12 @@ public class GithubConverterService{
 			
 			if (p.getTitle() != null && p.getTitle().length() > 255) {
 				logger.info("Title too long " + p.getTitle() );
-				k.setTitle(p.getTitle().substring(0, 254));
+				k.setTitle(sanitizeUtf8mb4(p.getTitle()).substring(0, 254));
 			} else {
-				k.setTitle(p.getTitle());
+				k.setTitle(sanitizeUtf8mb4(p.getTitle()));
 			}
 			
-			k.setText(p.getText());
+			k.setText(sanitizeUtf8mb4(p.getText()));
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.THREAD_STARTER);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
@@ -701,7 +713,7 @@ public class GithubConverterService{
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
-			k.setText(p.getText());
+			k.setText(sanitizeUtf8mb4(p.getText()));
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.POST);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
@@ -825,7 +837,7 @@ public class GithubConverterService{
 			ci.setStartTime(ge.getCreatedAt());
 			ci.setContent(c);
 			c.setAuthor(curUser);
-			c.setTitle(ge.getTitle());
+			c.setTitle(sanitizeUtf8mb4(ge.getTitle()));
 			c.setText(ge.getHtmlUrl());
 		}
 			
