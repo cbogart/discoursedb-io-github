@@ -473,10 +473,14 @@ public class GithubConverter implements CommandLineRunner {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<GitHubPullReqCommits> it = mapper.readerFor(GitHubPullReqCommits.class).with(schema).readValues(in);
+			int row=0;
 			while (it.hasNextValue()) {
 				GitHubPullReqCommits prc = it.next();
 				converterService.mapPullRequestCommits(prc, users, projects, commit_shas);
-				
+				row += 1;
+				if (row%1000 == 0) {
+					logger.info("pullShasFile row " + row);
+				}					
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
