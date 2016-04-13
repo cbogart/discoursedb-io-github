@@ -328,6 +328,7 @@ public class GithubConverterService{
 	
 	//From http://stackoverflow.com/questions/14981109/checking-utf-8-data-type-3-byte-or-4-byte-unicode
 		public static boolean isEntirelyInBasicMultilingualPlane(String text) {
+			if (text==null) { return true; }
 		    for (int i = 0; i < text.length(); i++) {
 		        if (Character.isSurrogate(text.charAt(i))) {
 		            return false;
