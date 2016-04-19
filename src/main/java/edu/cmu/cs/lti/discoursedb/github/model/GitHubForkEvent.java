@@ -60,7 +60,6 @@ public class GitHubForkEvent {
 		return projectAuth;
 	}
 	@JsonProperty("project_auth")
-	@JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
 	public void setProjectAuth(String projectAuth) {
 		this.projectAuth = projectAuth;
 	}
@@ -68,6 +67,7 @@ public class GitHubForkEvent {
 		return createdAt;
 	}
 	@JsonProperty("created_at")
+	@JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
 	public void setCreatedAt(Date createdAt) {
 		this.createdAt = createdAt;
 	}
