@@ -684,7 +684,7 @@ public class GithubConverterService{
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
-			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getProvenance(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 		}
 		case "issue_title": {
 			User actor = getUser(curDiscourse, actorname);
