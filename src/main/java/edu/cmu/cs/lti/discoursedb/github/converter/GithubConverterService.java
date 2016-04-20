@@ -355,11 +355,12 @@ public class GithubConverterService{
 	public void mapCommitCommentEvent(GitHubCommitCommentEvent cce,
 			Set<String> users, Set<String> projects, Long contribution_id) {
 
-		// Only do this if EITHER the user OR the project are already in the database
+		// Only do this if the user AND NOT the project are already in the database
+		// Because project commit comments are handled elsewhere
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		
-		if (   users.contains(cce.getActor()) ||  projects.contains(cce.getProject()) ) {
+		if (   users.contains(cce.getActor()) && !  projects.contains(cce.getProject()) ) {
 			User curUser = ensureUserExists(cce.getActor(), users, curDiscourse);
 			
 			Content k = contentService.createContent();	
@@ -686,6 +687,7 @@ public class GithubConverterService{
 			co.setStartTime(p.getTime());
 			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 		}
+		
 		case "issue_title": {
 			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
@@ -756,6 +758,62 @@ public class GithubConverterService{
 				
 		logger.trace("Post mapping completed.");
 	}
+	
+	/**
+	 * Maps a post to DiscourseDB entities.
+	 * 
+	 * @param p the post object to map to DiscourseDB
+	 * @param dataSetName the name of the dataset the post was extracted from
+	 */
+	public void mapCommitCommentEntities(GitHubIssueComment p, Map<String,Long> commit_shas) {				
+		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
+
+		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
+		String actorname = p.getActor();
+		if (actorname == null) { actorname = "unknown"; }
+		switch (p.getRectype()) {
+		
+		case "commit_comments": {
+			User actor = getUser(curDiscourse, actorname);
+			
+			Content k = contentService.createContent();	
+			k.setAuthor(actor);
+			k.setStartTime(p.getTime());
+			
+			// TO DO: extract from p.getTitle() -> (position, line, path)
+			
+			k.setText(sanitizeUtf8mb4(p.getText()));
+			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
+			co.setCurrentRevision(k);
+			co.setFirstRevision(k);
+			co.setStartTime(p.getTime());
+			
+			String comment_on_sha = p.getProjectFullName() + "#" + p.getAction();
+			if (commit_shas.containsKey(comment_on_sha)) {
+				Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(comment_on_sha));
+				if (appliesTo.isPresent() == false) {
+					logger.warn("Could not find pull request reference to project " + comment_on_sha);
+				} else {
+					appliesTo.get().getContributionPartOfDiscourseParts().forEach(
+							dp -> discoursePartService.addContributionToDiscoursePart(co,dp.getDiscoursePart()));
+					
+
+					contributionService.createDiscourseRelation(co, appliesTo.get(), DiscourseRelationTypes.REPLY);
+				}
+			}
+			
+			//dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(), COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+		}
+		
+		}
+		
+
+				
+		logger.trace("Post mapping completed.");
+	}
+	
+	
 	public void mapPushEvent(GitHubPushEvent pe, Set<String> users, Set<String> projects, Map<String, Long> commit_shas,
 			String[] shas) {
 		Discourse curDiscourse = getDiscourse("Github");
@@ -763,9 +821,11 @@ public class GithubConverterService{
 		if (   users.contains(pe.getActor()) ||  projects.contains(pe.getProject()) ) {
 			User curUser = ensureUserExists(pe.getActor(), users, curDiscourse);
 			DiscoursePart curProject = ensureProjectExists(pe.getProject(), projects, curDiscourse);
-			DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, DiscoursePartTypes.GIT_PUSH);
+			DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse,
+					"Push by " + pe.getActor() + " at " + pe.getCreatedAt().toString(),
+					DiscoursePartTypes.GIT_PUSH);
 			curPush.setStartTime(pe.getCreatedAt());
-			
+
 			discoursePartService.createDiscoursePartRelation(curProject, curPush, DiscoursePartRelationTypes.SUBPART);
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, curProject, DiscoursePartInteractionTypes.GIT_PUSH);
 			for (String sha : shas) {
@@ -826,9 +886,11 @@ public class GithubConverterService{
 				con.setStartTime(ge.getCreatedAt());
 				con.setFirstRevision(c);  // ASSUMPTION: they come in chronologically
 				AnnotationInstance ai = annotationService.createTypedAnnotation("URL_WITH_REVISIONS");
-				annotationService.addFeature(ai, annotationService.createTypedFeature(ge.getHtmlUrl(), "LOCAL_URL"));
-				dataSourceService.addSource(con, new DataSourceInstance(ge.getHtmlUrl() + "#" + ge.getSha(), 
-						"local_url#sha", DataSourceTypes.GITHUB, "GITHUB"));
+				if (ge.getHtmlUrl() != null && ge.getHtmlUrl() != "") {
+					annotationService.addFeature(ai, annotationService.createTypedFeature(ge.getHtmlUrl(), "LOCAL_URL"));
+					dataSourceService.addSource(con, new DataSourceInstance(ge.getHtmlUrl() + "#" + ge.getSha(), 
+							"local_url#sha", DataSourceTypes.GITHUB, "GITHUB"));
+				}
 			} else {
 				con = contributionService.findOne(context_map.get(ge.getHtmlUrl())).get();
 				con.getCurrentRevision().setNextRevision(c);
