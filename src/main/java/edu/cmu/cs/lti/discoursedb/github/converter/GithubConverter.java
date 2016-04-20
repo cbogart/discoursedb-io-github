@@ -108,11 +108,23 @@ public class GithubConverter implements CommandLineRunner {
 			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
 				pathStream.filter(path -> path.toFile().isFile())
 				.filter(path -> !path.endsWith(".csv"))
-				.forEach(path -> processIssuesFile(path.toFile()));
-			}				
+				.forEach(path -> processIssuesFile(path.toFile(), true, null));
+			}
+			
+			logger.info("Rewalk issues files, connecting up commit comments this time");			
+			commit_shas = converterService.getCommitShas();
+			
+			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
+				pathStream.filter(path -> path.toFile().isFile())
+				.filter(path -> !path.endsWith(".csv"))
+				.forEach(path -> processIssuesFile(path.toFile(), false, commit_shas));
+			}
 		} else {
 			logger.info("No gitdata.issues in custom.properties");
 		}
+		
+		
+		
 		
 		if (env.containsProperty("gitdata.actors")) {
 			logger.info("Start processing actors");		
@@ -171,7 +183,8 @@ public class GithubConverter implements CommandLineRunner {
 			logger.info("No gitdata.githubarchive in custom.properties");
 		}*/
 		
-		commit_shas = converterService.getCommitShas();
+		if (commit_shas == null) { commit_shas = converterService.getCommitShas(); }
+		
 		if (env.containsProperty("gitdata.pull_shas")) {
 			logger.info("Add links between pull requests and SHA keys");
 				File watchersFile = Paths.get(env.getRequiredProperty("gitdata.pull_shas")).toFile();
@@ -183,6 +196,7 @@ public class GithubConverter implements CommandLineRunner {
 		/* NB This will supercede the "gitdata.watchers" information above */
 		if (env.containsProperty("gitdata.project_events")) {
 			logger.info("Add events that concern users and projects");
+			
 			File f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/commit_comment_events.csv").toFile();
 			processCommitCommentEvents(f, users, projects, commit_shas);
 			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/push_events.csv").toFile();
@@ -278,7 +292,7 @@ public class GithubConverter implements CommandLineRunner {
 		try(InputStream in = new FileInputStream(f);) {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
-			int rows = 0;
+			long rows = 0;
 			MappingIterator<GitHubPushEvent> it = mapper.readerFor(GitHubPushEvent.class).with(schema).readValues(in);
 			while (it.hasNextValue()) {
 				GitHubPushEvent pe = it.next();
@@ -288,7 +302,8 @@ public class GithubConverter implements CommandLineRunner {
 				}
 				rows += 1;
 				if (rows%10000 == 0) {
-					logger.info("....read " + (rows*10000) + " out of about 234000000");
+					logger.info("....read " + rows + " out of about 234,000,000 " + (100*rows/234000000) + "%");
+					
 				}
 			}
 		}catch(Exception e){
@@ -300,7 +315,7 @@ public class GithubConverter implements CommandLineRunner {
 	/* Map sha to contribution_id.  
 	 * The sha is for a commit, and the contribution_id is for the text of the commit message
 	 */
-	private Map<String,Long> commit_shas = new LinkedHashMap<String,Long>();
+	private Map<String,Long> commit_shas = null;
 	
 	private void processCommitCommentEvents(File f, Set<String> users, Set<String> projects, Map<String,Long> commit_shas) {
 		logger.info("Processing "+f + ", first for Commit messages... ");
@@ -317,7 +332,6 @@ public class GithubConverter implements CommandLineRunner {
 		}catch(Exception e){
 			logger.error("Could not parse data file "+f, e);
 		}    		
-		
 	}
 
 	
@@ -327,7 +341,7 @@ public class GithubConverter implements CommandLineRunner {
 	 * 
 	 * @param file an dataset file to process
 	 */
-	private void processIssuesFile(File file){
+	private void processIssuesFile(File file, boolean ignoreCommitComments, Map<String,Long> commit_shas){
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
@@ -337,14 +351,15 @@ public class GithubConverter implements CommandLineRunner {
 			boolean first = true;
 			while (it.hasNextValue()) {
 				GitHubIssueComment currentComment = it.next();
-				if (first) {
-					converterService.mapIssue(currentComment);
-					first = false;
+				if (ignoreCommitComments) {
+					if (first) {
+						converterService.mapIssue(currentComment);
+						first = false;
+					}
+					converterService.mapIssueEntities(currentComment);
+				} else {
+					converterService.mapCommitCommentEntities(currentComment, commit_shas);
 				}
-				converterService.mapIssueEntities(currentComment);
-				//TODO pass each data point to the converterService which then performs the mapping in a transaction
-				//don't perform the mapping here directly, since it would not allow the transactions to be
-				//work properly
 
 			}
 		}catch(Exception e){
@@ -454,15 +469,13 @@ public class GithubConverter implements CommandLineRunner {
 	}
 	
 	/**
-	 * Parses a CSV file listing who watched what project when, 
-	 * binds its contents to a GitHubWatcherList object,
+	 * Parses a CSV file listing which pull requests contained which
+	 * commits (by SHA),
 	 * and passes it on to the DiscourseDB converter
 	 *
 	 * File format example:
 	 * 
-	 * actor,project,created_at
-	 * F21,danielstjules/Stringy,2015-01-01T00:01:53Z
-     * radlws,tomchristie/django-rest-framework,2015-01-01T00:05:29Z
+	 * (fix me)
      * 
 	 * @param file a dataset file to process
 	 */
@@ -473,13 +486,13 @@ public class GithubConverter implements CommandLineRunner {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<GitHubPullReqCommits> it = mapper.readerFor(GitHubPullReqCommits.class).with(schema).readValues(in);
-			int row=0;
+			long row=0;
 			while (it.hasNextValue()) {
 				GitHubPullReqCommits prc = it.next();
 				converterService.mapPullRequestCommits(prc, users, projects, commit_shas);
 				row += 1;
-				if (row%1000 == 0) {
-					logger.info("pullShasFile row " + row);
+				if (row%10000 == 0) {
+					logger.info("pullShasFile row " + row + " out of about 46,000,000");
 				}					
 			}
 		}catch(Exception e){
@@ -663,7 +676,7 @@ public class GithubConverter implements CommandLineRunner {
 	 */
 	private void processActorsFile(File file){
 		logger.info("Processing "+file);
-
+		String lastgooduser = "(top of file)";
 		try(InputStream in = new FileInputStream(file);) {
 
 			CsvMapper mapper = new CsvMapper();
@@ -671,9 +684,13 @@ public class GithubConverter implements CommandLineRunner {
 			MappingIterator<GithubUserInfo> it = mapper.readerFor(GithubUserInfo.class).with(schema).readValues(in);
 			while (it.hasNextValue()) {
 				GithubUserInfo currentUser = it.next();
-
-				converterService.mapUserInfo(currentUser);
-
+				try {
+					converterService.mapUserInfo(currentUser);
+				} catch (Exception e) {
+					logger.error("error after ", lastgooduser, e.getMessage());
+				}
+				lastgooduser = currentUser.getLogin() + "/" + currentUser.getError() + "/" + currentUser.getName();
+				logger.info(lastgooduser);
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
