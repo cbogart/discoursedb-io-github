@@ -351,11 +351,11 @@ public class GithubConverter implements CommandLineRunner {
 			boolean first = true;
 			while (it.hasNextValue()) {
 				GitHubIssueComment currentComment = it.next();
+				if (first) {
+					converterService.mapIssue(currentComment);
+					first = false;
+				}
 				if (ignoreCommitComments) {
-					if (first) {
-						converterService.mapIssue(currentComment);
-						first = false;
-					}
 					converterService.mapIssueEntities(currentComment);
 				} else {
 					converterService.mapCommitCommentEntities(currentComment, commit_shas);
@@ -422,6 +422,7 @@ public class GithubConverter implements CommandLineRunner {
 			boolean first = true;
 			while (it.hasNextValue()) {
 				RevisionEvent revision = it.next();
+				//logger.info("Version: " + revision.getProjectFullName() + ", " + revision.getPypiName() + "/" + revision.getVersion() + " " + revision.getUploadTime());
 				converterService.mapVersionInfo(
 						revision.getProjectFullName(),
 						revision.getPypiName(),
@@ -687,10 +688,11 @@ public class GithubConverter implements CommandLineRunner {
 				try {
 					converterService.mapUserInfo(currentUser);
 				} catch (Exception e) {
-					logger.error("error after ", lastgooduser, e.getMessage());
+					logger.error("error ", e.getMessage());
+					logger.error(lastgooduser);
 				}
 				lastgooduser = currentUser.getLogin() + "/" + currentUser.getError() + "/" + currentUser.getName();
-				logger.info(lastgooduser);
+				//logger.info(lastgooduser);
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);

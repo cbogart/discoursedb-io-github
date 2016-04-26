@@ -71,8 +71,13 @@ public class GitHubIssueComment {
 	}
 	
 	public String getIssueIdentifier() {
-		return "Issue " + getProjectFullName() + "#" + getIssueid();
+		if (getIssueid() == 0) {
+			return getProjectFullName() + " commit messages";
+		} else {
+			return "Issue " + getProjectFullName() + "#" + getIssueid();			
+		}
 	}
+	
 	public String getProjectFullName() {
 		return getProjectOwner() + "/" + getProjectName();
 	}

@@ -37,6 +37,7 @@ import edu.cmu.cs.lti.discoursedb.core.model.user.ContributionInteraction;
 import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteraction;
 //import edu.cmu.cs.lti.discoursedb.core.model.user.DiscoursePartInteractionType;
 import edu.cmu.cs.lti.discoursedb.core.model.user.User;
+import edu.cmu.cs.lti.discoursedb.core.repository.macro.DiscoursePartRelationRepository;
 import edu.cmu.cs.lti.discoursedb.core.service.annotation.AnnotationService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContentService;
 import edu.cmu.cs.lti.discoursedb.core.service.macro.ContributionService;
@@ -101,6 +102,9 @@ public class GithubConverterService{
 	}
 	private DiscoursePart getDiscoursePart(Discourse d, String name, DiscoursePartTypes typ) {
 		return discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
+	}
+	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, DataSourceTypes sourceType, String datasetName) {
+		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, sourceType, datasetName);
 	}
 	private User getUser(Discourse d, String username) {
 		return userService.createOrGetUser(d, username);
@@ -337,12 +341,13 @@ public class GithubConverterService{
 		    return true;
 		}
 		public static String sanitizeUtf8mb4(String text) {
-			if (isEntirelyInBasicMultilingualPlane(text)) {
+			return text;
+/*			if (isEntirelyInBasicMultilingualPlane(text)) {
 				return text;
 			} else {
 				logger.info("Sanitizing " + text + " of utf8mb4 characters");
 				return StringEscapeUtils.escapeJava(text);
-			}
+			}*/
 		}
 	
 	/**
@@ -359,6 +364,7 @@ public class GithubConverterService{
 		// Because project commit comments are handled elsewhere
 		
 		Discourse curDiscourse = getDiscourse("Github");
+		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, cce.getProject(), DiscoursePartTypes.GITHUB_REPO);
 		
 		if (   users.contains(cce.getActor()) && !  projects.contains(cce.getProject()) ) {
 			User curUser = ensureUserExists(cce.getActor(), users, curDiscourse);
@@ -375,12 +381,13 @@ public class GithubConverterService{
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(cce.getCreatedAt());
-						
+			discoursePartService.addContributionToDiscoursePart(co, projectDP);
 			if (contribution_id != null) {
 				Optional<Contribution> appliesTo = contributionService.findOne(contribution_id);
 				if (appliesTo.isPresent()) {
 					contributionService.createDiscourseRelation(co, appliesTo.get(), DiscourseRelationTypes.REPLY);
 					for (DiscoursePartContribution dpc: appliesTo.get().getContributionPartOfDiscourseParts()) {
+						extendDiscoursePartDates(dpc.getDiscoursePart(), cce.getCreatedAt());
 						discoursePartService.addContributionToDiscoursePart(co, dpc.getDiscoursePart());
 					}
 				}
@@ -463,6 +470,16 @@ public class GithubConverterService{
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		DiscoursePart forumDP = getDiscoursePart(curDiscourse, posting.getFullForumName(), DiscoursePartTypes.FORUM);
+		DiscoursePart threadDP = getDiscoursePartByDataSource(curDiscourse, posting.getForumThreadIdentifier(), "ggroups:forum/threadid", DataSourceTypes.GITHUB, dataSourceName);
+		if (posting.getResponseTo() == "") {
+			discoursePartService.createDiscoursePartRelation(forumDP, threadDP, DiscoursePartRelationTypes.SUBPART);
+		}
+		if (threadDP.getName() == null) {
+			threadDP.setName("Thread: " + posting.getTitle());
+			threadDP.setStartTime(posting.getDate());
+			threadDP.setType("THREAD");
+		}
+		threadDP.setEndTime(posting.getDate());
 		
 		User actor = getUser(curDiscourse, posting.getAuthorNameAndEmail());
 		actor.setEmail(posting.getAuthorEmail());
@@ -491,7 +508,7 @@ public class GithubConverterService{
 		dataSourceService.addSource(co,  new DataSourceInstance(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", DataSourceTypes.GITHUB, dataSourceName));
 		
 		//Add contribution to DiscoursePart
-		discoursePartService.addContributionToDiscoursePart(co, forumDP);
+		discoursePartService.addContributionToDiscoursePart(co, threadDP);
 	}
 	
 	/**
@@ -619,7 +636,8 @@ public class GithubConverterService{
 			annotationService.addFeature(a, annotationService.createTypedFeature(version, "version"));
 			annotationService.addFeature(a, annotationService.createTypedFeature(fmt.format(updated), "update_date"));
 			annotationService.addFeature(a, annotationService.createTypedFeature(packageFile, "update_file"));
-			dataSourceService.addSource(a, new DataSourceInstance("pypi_versions#" + packageFile, "versionfile", DataSourceTypes.GITHUB, "GITHUB" ));
+			dataSourceService.addSource(a, new DataSourceInstance(
+					("pypi_versions#" + packageFile).substring(0,95), "versionfile", DataSourceTypes.GITHUB, "GITHUB" ));
 	
 		} catch (Exception e) {
 			logger.trace("Error classifying project info for " + repo + ", " + e.getMessage());
@@ -652,6 +670,15 @@ public class GithubConverterService{
 		
 	}
 	
+	public void extendDiscoursePartDates(DiscoursePart dp, Date newdate) {
+		if (dp.getStartTime() == null || dp.getStartTime().after(newdate)) {
+			dp.setStartTime(newdate);
+		}
+		if (dp.getEndTime() == null || dp.getEndTime().before(newdate)) {
+			dp.setEndTime(newdate);
+		}
+	}
+	
 	/**
 	 * Maps a post to DiscourseDB entities.
 	 * 
@@ -661,8 +688,13 @@ public class GithubConverterService{
 	public void mapIssueEntities(GitHubIssueComment p) {				
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 
+		if (p.getText() == null || p.getText() == "") {
+			return;
+		}
 		Discourse curDiscourse = getDiscourse("Github");
+		
 		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
+		
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
 		switch (p.getRectype()) {
@@ -685,9 +717,11 @@ public class GithubConverterService{
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
+			extendDiscoursePartDates(issueDP, p.getTime());
+			discoursePartService.addContributionToDiscoursePart(co, issueDP);
 			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 		}
-		
+		break;
 		case "issue_title": {
 			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
@@ -706,6 +740,7 @@ public class GithubConverterService{
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
+			extendDiscoursePartDates(issueDP, p.getTime());
 			dataSourceService.addSource(co, new DataSourceInstance(p.getIssueIdentifier(), "github#issue", DataSourceTypes.GITHUB, "GITHUB"));
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
@@ -717,10 +752,12 @@ public class GithubConverterService{
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
 			k.setText(sanitizeUtf8mb4(p.getText()));
+			k.setTitle(p.getTitle());
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.POST);
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
+			extendDiscoursePartDates(issueDP, p.getTime());
 			/*Optional<Contribution> parent = contributionService.findOneByDataSource(p.getIssueIdentifier(), "github#issue", "GITHUB");
 			if (!parent.isPresent()) {
 				logger.error("cannot link to issue " + p.getIssueIdentifier());
@@ -788,8 +825,8 @@ public class GithubConverterService{
 			co.setCurrentRevision(k);
 			co.setFirstRevision(k);
 			co.setStartTime(p.getTime());
-			
 			String comment_on_sha = p.getProjectFullName() + "#" + p.getAction();
+			extendDiscoursePartDates(issueDP, p.getTime());
 			if (commit_shas.containsKey(comment_on_sha)) {
 				Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(comment_on_sha));
 				if (appliesTo.isPresent() == false) {
@@ -802,7 +839,7 @@ public class GithubConverterService{
 					contributionService.createDiscourseRelation(co, appliesTo.get(), DiscourseRelationTypes.REPLY);
 				}
 			}
-			
+			discoursePartService.addContributionToDiscoursePart(co, issueDP);
 			//dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(), COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 		}
 		
@@ -825,8 +862,9 @@ public class GithubConverterService{
 					"Push by " + pe.getActor() + " at " + pe.getCreatedAt().toString(),
 					DiscoursePartTypes.GIT_PUSH);
 			curPush.setStartTime(pe.getCreatedAt());
-
+			
 			discoursePartService.createDiscoursePartRelation(curProject, curPush, DiscoursePartRelationTypes.SUBPART);
+			discoursePartService.save(curPush);
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, curProject, DiscoursePartInteractionTypes.GIT_PUSH);
 			for (String sha : shas) {
 				String source = pe.getProject() + "#" + sha;
@@ -843,7 +881,8 @@ public class GithubConverterService{
 	}
 	public void mapPullRequestCommits(GitHubPullReqCommits prc, Set<String> users, Set<String> projects, Map<String,Long> commit_shas) {
 		Discourse curDiscourse = getDiscourse("Github");
-		
+
+
 		if (commit_shas.containsKey(prc.getFullName() + "#" + prc.getSha())) {
 			Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(prc.getFullName() + "#" + prc.getSha()));
 			if (appliesTo.isPresent() == false) {
@@ -856,6 +895,7 @@ public class GithubConverterService{
 				DiscoursePart issueDP = getDiscoursePart(curDiscourse, prc.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
 				DiscoursePartContribution dpc = discoursePartService.addContributionToDiscoursePart(appliesTo.get(), issueDP);
 				dpc.setStartTime(prc.getCreatedAt());
+				extendDiscoursePartDates(issueDP, prc.getCreatedAt());
 			}
 		} else {
 			//logger.warn("Could not find pull request reference to project; no match for " + prc.getFullName() + " sha " + prc.getSha());			
@@ -881,6 +921,9 @@ public class GithubConverterService{
 			Contribution con = null;
 			Content c = contentService.createContent();
 			c.setStartTime(ge.getCreatedAt());
+			c.setTitle(ge.getTitle());
+			c.setText("(not captured)");
+			this.extendDiscoursePartDates(wikiDP, ge.getCreatedAt());
 			if (!context_map.containsKey(ge.getHtmlUrl())) {
 				con = contributionService.createTypedContribution(ContributionTypes.WIKI_PAGE);
 				con.setStartTime(ge.getCreatedAt());
@@ -898,6 +941,8 @@ public class GithubConverterService{
 				con.setCurrentRevision(c);
 			}
 
+			discoursePartService.createDiscoursePartRelation(projectDP, wikiDP, DiscoursePartRelationTypes.SUBPART);
+			discoursePartService.addContributionToDiscoursePart(con, wikiDP);
 			ContributionInteraction ci = userService.createContributionInteraction(curUser, con, ContributionInteractionTypes.EDIT);
 			ci.setStartTime(ge.getCreatedAt());
 			ci.setContent(c);
