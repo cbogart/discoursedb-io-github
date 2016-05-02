@@ -76,16 +76,18 @@ public class MailingListComment {
 	public String getOutsideForum() {
 		return outsideForum;
 	}
+	@JsonProperty("outside_forum_id")
+	public void setOutsideForum(String outsideForum) {
+		this.outsideForum = outsideForum;
+	}
+
+	
 	public String getFullForumName() {
 		return "Forum " + outsideForum;
 	}
 
 	public String getForumThreadIdentifier() {
 		return "ggroups:" + getOutsideForum() + "/" + getThreadPath();
-	}
-	@JsonProperty("outside_forum_id")
-	public void setOutsideForum(String outsideForum) {
-		this.outsideForum = outsideForum;
 	}
 
 	public String getFullyQualifiedUniqueMessage() {
