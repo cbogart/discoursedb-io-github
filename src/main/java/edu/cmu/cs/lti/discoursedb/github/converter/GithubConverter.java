@@ -7,9 +7,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -101,24 +104,14 @@ public class GithubConverter implements CommandLineRunner {
 				logger.error("Provided location (" + dataSetFile.getAbsolutePath() + ") is a file and not a directory.");
 				throw new RuntimeException("Can't read directory "+dataSetPath);
 			}
-			//Walk through dataset directory and parse each file
-	
-			logger.info("Start processing issues");			
-	
+			
+			logger.info("Start processing issues, commit messages, etc.");			
 			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
 				pathStream.filter(path -> path.toFile().isFile())
 				.filter(path -> !path.endsWith(".csv"))
-				.forEach(path -> processIssuesFile(path.toFile(), true, null));
-			}
+				.forEach(path -> processIssuesFile(path.toFile()));
+			}			
 			
-			logger.info("Rewalk issues files, connecting up commit comments this time");			
-			commit_shas = converterService.getCommitShas();
-			
-			try (Stream<Path> pathStream = Files.walk(dataSetPath)) {
-				pathStream.filter(path -> path.toFile().isFile())
-				.filter(path -> !path.endsWith(".csv"))
-				.forEach(path -> processIssuesFile(path.toFile(), false, commit_shas));
-			}
 		} else {
 			logger.info("No gitdata.issues in custom.properties");
 		}
@@ -287,8 +280,13 @@ public class GithubConverter implements CommandLineRunner {
 	}
 
 	private void processPushEvents(File f, Set<String> users, Set<String> projects) {
-		logger.info("Processing "+f + ", first for Commit messages... ");
-
+		logger.info("SKIPPING Processing "+f + ", first for Commit messages... ");
+		return;
+		/*
+		 * This stuff takes a long time, and very often does not find relevant connections
+		 * to make anyway.  It's not clear that pushes are super useful as groupings anyway.
+		 * 
+		 * 
 		try(InputStream in = new FileInputStream(f);) {
 			CsvMapper mapper = new CsvMapper();
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
@@ -308,7 +306,7 @@ public class GithubConverter implements CommandLineRunner {
 			}
 		}catch(Exception e){
 			logger.error("Could not parse data file "+f, e);
-		}    		
+		}    	*/	
 				
 	}
 
@@ -341,7 +339,7 @@ public class GithubConverter implements CommandLineRunner {
 	 * 
 	 * @param file an dataset file to process
 	 */
-	private void processIssuesFile(File file, boolean ignoreCommitComments, Map<String,Long> commit_shas){
+	private void processIssuesFile(File file){
 		logger.info("Processing "+file);
 
 		try(InputStream in = new FileInputStream(file);) {
@@ -349,19 +347,26 @@ public class GithubConverter implements CommandLineRunner {
 			CsvSchema schema = mapper.schemaWithHeader().withNullValue("None");
 			MappingIterator<GitHubIssueComment> it = mapper.readerFor(GitHubIssueComment.class).with(schema).readValues(in);
 			boolean first = true;
+			Queue<GitHubIssueComment> commitComments = new LinkedList<GitHubIssueComment>();
+			Map<String,Long> commit_shas = new HashMap<String,Long>();
 			while (it.hasNextValue()) {
 				GitHubIssueComment currentComment = it.next();
 				if (first) {
 					converterService.mapIssue(currentComment);
 					first = false;
 				}
-				if (ignoreCommitComments) {
-					converterService.mapIssueEntities(currentComment);
+				if (currentComment.getRectype() == "commit_comments") {
+					commitComments.add(currentComment);
 				} else {
-					converterService.mapCommitCommentEntities(currentComment, commit_shas);
-				}
-
+					long id = converterService.mapIssueEntities(currentComment);
+					commit_shas.put(currentComment.getAction(), id);
+				} 
 			}
+			for (GitHubIssueComment cc : commitComments) {
+				converterService.mapCommitCommentEntities(cc, commit_shas);
+			}
+
+			
 		}catch(Exception e){
 			logger.error("Could not parse data file "+file, e);
 		}    		
