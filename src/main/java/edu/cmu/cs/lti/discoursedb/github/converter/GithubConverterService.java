@@ -2,6 +2,7 @@ package edu.cmu.cs.lti.discoursedb.github.converter;
 
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -12,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.lang3.StringEscapeUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +33,7 @@ import edu.cmu.cs.lti.discoursedb.core.model.macro.Contribution;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.Discourse;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePart;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePartContribution;
+import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscoursePartRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.macro.DiscourseRelation;
 import edu.cmu.cs.lti.discoursedb.core.model.system.DataSourceInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.user.ContributionInteraction;
@@ -505,7 +508,7 @@ public class GithubConverterService{
 		co.setFirstRevision(k);
 		co.setStartTime(posting.getDate());
 		keyIndex.put(posting.getFullyQualifiedUniqueMessage(), co.getId());
-		dataSourceService.addSource(co,  new DataSourceInstance(posting.getFullyQualifiedUniqueMessage(), "ggroups#unique_message", DataSourceTypes.GITHUB, dataSourceName));
+		dataSourceService.addSource(co,  new DataSourceInstance(StringUtils.left(posting.getFullyQualifiedUniqueMessage(),94), "ggroups#unique_message", DataSourceTypes.GITHUB, dataSourceName));
 		
 		//Add contribution to DiscoursePart
 		discoursePartService.addContributionToDiscoursePart(co, threadDP);
@@ -531,9 +534,9 @@ public class GithubConverterService{
 		Long parentid = keyIndex.get(posting.getFullyQualifiedResponseTo());
 		if (postid == null || parentid == null) {
 			logger.error("ptrs are" + postid + ", " + parentid);
-			logger.error("Cannot find post and parent of " + posting.getFullyQualifiedUniqueMessage() + " parent " + posting.getFullyQualifiedResponseTo());
+			logger.error("Cannot match post with parent: " + posting.getFullyQualifiedUniqueMessage() + " parent " + posting.getFullyQualifiedResponseTo());
 			return;
-		}
+		} 
 		try {
 			Optional<Contribution> thispost = contributionService.findOne(postid); 
 			Optional<Contribution> parent = contributionService.findOne(parentid);
@@ -637,7 +640,7 @@ public class GithubConverterService{
 			annotationService.addFeature(a, annotationService.createTypedFeature(fmt.format(updated), "update_date"));
 			annotationService.addFeature(a, annotationService.createTypedFeature(packageFile, "update_file"));
 			dataSourceService.addSource(a, new DataSourceInstance(
-					("pypi_versions#" + packageFile).substring(0,95), "versionfile", DataSourceTypes.GITHUB, "GITHUB" ));
+					StringUtils.left("pypi_versions#" + packageFile,94), "versionfile", DataSourceTypes.GITHUB, "GITHUB" ));
 	
 		} catch (Exception e) {
 			logger.trace("Error classifying project info for " + repo + ", " + e.getMessage());
@@ -685,11 +688,11 @@ public class GithubConverterService{
 	 * @param p the post object to map to DiscourseDB
 	 * @param dataSetName the name of the dataset the post was extracted from
 	 */
-	public void mapIssueEntities(GitHubIssueComment p) {				
+	public long mapIssueEntities(GitHubIssueComment p) {				
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 
 		if (p.getText() == null || p.getText() == "") {
-			return;
+			return 0L;
 		}
 		Discourse curDiscourse = getDiscourse("Github");
 		
@@ -719,9 +722,9 @@ public class GithubConverterService{
 			co.setStartTime(p.getTime());
 			extendDiscoursePartDates(issueDP, p.getTime());
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
-			dataSourceService.addSource(co, new DataSourceInstance(p.getProjectFullName() + "#" + p.getAction(),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+			dataSourceService.addSource(co, new DataSourceInstance(StringUtils.left(p.getProjectFullName() + "#" + p.getAction(), 94),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+			return co.getId();
 		}
-		break;
 		case "issue_title": {
 			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
@@ -744,8 +747,8 @@ public class GithubConverterService{
 			dataSourceService.addSource(co, new DataSourceInstance(p.getIssueIdentifier(), "github#issue", DataSourceTypes.GITHUB, "GITHUB"));
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
+			return co.getId();
 		}
-		break;
 		case "issue_comment": {
 			User actor = getUser(curDiscourse, p.getActor());
 			Content k = contentService.createContent();	
@@ -766,8 +769,8 @@ public class GithubConverterService{
 */
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
+			return co.getId();
 		}
-		break;  
 		/*//pull_request_commit_comment, pull_request_history, commit_messages, readme, issue_event
 		case "pull_request_commit_comment": {
 			User actor = userService.createOrGetUser(curDiscourse, p.getActor());
@@ -794,6 +797,7 @@ public class GithubConverterService{
 
 				
 		logger.trace("Post mapping completed.");
+		return 0L;
 	}
 	
 	/**
@@ -853,6 +857,46 @@ public class GithubConverterService{
 	
 	public void mapPushEvent(GitHubPushEvent pe, Set<String> users, Set<String> projects, Map<String, Long> commit_shas,
 			String[] shas) {
+		
+		if (   users.contains(pe.getActor()) ||  projects.contains(pe.getProject()) ) {
+
+			List<Contribution> commits = new ArrayList<Contribution>();
+			for (String sha : shas) {
+				String source = pe.getProject() + "#" + sha;
+				if (commit_shas.containsKey(source)) {
+					Optional<Contribution> appliesTo = contributionService.findOne(commit_shas.get(source));
+					if (appliesTo.isPresent()) {
+						commits.add(appliesTo.get());
+					}
+				}
+				
+			}
+			
+			String pushname = "Push by " + pe.getActor() + " at " + pe.getCreatedAt().toString();		
+			if (commits.size() > 0) {
+				Discourse curDiscourse = getDiscourse("Github");
+
+				User curUser = ensureUserExists(pe.getActor(), users, curDiscourse);
+				DiscoursePart curProject = ensureProjectExists(pe.getProject(), projects, curDiscourse);
+				DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse,
+						pushname, DiscoursePartTypes.GIT_PUSH);
+
+				logger.info("Found " + commits.size() + " commits for " + pushname);
+				for (Contribution c : commits) {
+					discoursePartService.addContributionToDiscoursePart(c, curPush);
+					extendDiscoursePartDates(curPush, c.getStartTime());
+				}
+				discoursePartService.createDiscoursePartRelation(curProject, curPush, DiscoursePartRelationTypes.SUBPART);
+				userService.createDiscoursePartInteraction(curUser, curProject, DiscoursePartInteractionTypes.GIT_PUSH);
+			} else {
+				logger.info("Found NO commits for " + pushname);
+			}
+			// CURRENTLY: NO DATA SOURCE
+		}		
+	}
+	
+	public void mapPushEventOld(GitHubPushEvent pe, Set<String> users, Set<String> projects, Map<String, Long> commit_shas,
+			String[] shas) {
 		Discourse curDiscourse = getDiscourse("Github");
 		
 		if (   users.contains(pe.getActor()) ||  projects.contains(pe.getProject()) ) {
@@ -879,6 +923,8 @@ public class GithubConverterService{
 			// CURRENTLY: NO DATA SOURCE
 		}		
 	}
+	
+	
 	public void mapPullRequestCommits(GitHubPullReqCommits prc, Set<String> users, Set<String> projects, Map<String,Long> commit_shas) {
 		Discourse curDiscourse = getDiscourse("Github");
 
