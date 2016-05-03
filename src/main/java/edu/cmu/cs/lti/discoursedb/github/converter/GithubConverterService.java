@@ -701,6 +701,7 @@ public class GithubConverterService{
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
 		switch (p.getRectype()) {
+		case "pull_request_commit": 
 		case "commit_messages": {
 			User actor = getUser(curDiscourse, actorname);
 			
@@ -748,6 +749,20 @@ public class GithubConverterService{
 			//Add contribution to DiscoursePart
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
 			return co.getId();
+		}
+		case "issue_closed": {
+			User actor = getUser(curDiscourse, p.getActor());
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(actor, issueDP, DiscoursePartInteractionTypes.GITHUB_ISSUE_CLOSE);
+			extendDiscoursePartDates(issueDP, p.getTime());
+			dpi.setStartTime(p.getTime());
+			return 0L;
+		}
+		case "pull_request_merged": {
+			User actor = getUser(curDiscourse, p.getActor());
+			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(actor, issueDP, DiscoursePartInteractionTypes.GIT_PULL_REQUEST_MERGE);
+			extendDiscoursePartDates(issueDP, p.getTime());
+			dpi.setStartTime(p.getTime());
+			return 0L;
 		}
 		case "issue_comment": {
 			User actor = getUser(curDiscourse, p.getActor());
@@ -815,6 +830,7 @@ public class GithubConverterService{
 		if (actorname == null) { actorname = "unknown"; }
 		switch (p.getRectype()) {
 		
+		case "pull_request_commit_comment":
 		case "commit_comments": {
 			User actor = getUser(curDiscourse, actorname);
 			

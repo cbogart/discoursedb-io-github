@@ -178,13 +178,13 @@ public class GithubConverter implements CommandLineRunner {
 		
 		if (commit_shas == null) { commit_shas = converterService.getCommitShas(); }
 		
-		if (env.containsProperty("gitdata.pull_shas")) {
+		/*if (env.containsProperty("gitdata.pull_shas")) {
 			logger.info("Add links between pull requests and SHA keys");
 				File watchersFile = Paths.get(env.getRequiredProperty("gitdata.pull_shas")).toFile();
 				processPullShasFile(watchersFile, users, projects, commit_shas);
 		} else {
 			logger.info("no gitdata.watchers in custom.properties");
-		}
+		}*/
 
 		/* NB This will supercede the "gitdata.watchers" information above */
 		if (env.containsProperty("gitdata.project_events")) {
