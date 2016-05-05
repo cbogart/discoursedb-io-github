@@ -1,11 +1,13 @@
 package edu.cmu.cs.lti.discoursedb.github.converter;
 
+import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +23,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
+
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import edu.cmu.cs.lti.discoursedb.core.model.TimedAnnotatableSourcedBE;
 import edu.cmu.cs.lti.discoursedb.core.model.TypedTimedAnnotatableSourcedBE;
@@ -682,6 +689,37 @@ public class GithubConverterService{
 		}
 	}
 	
+	public void addCrossrefs(String refinfo, String source, Discourse discourse, User actor) {
+		if (refinfo.length() == 0) { return; }
+		try {
+			JsonNode node = new ObjectMapper().readValue(new JsonFactory().createParser(refinfo), JsonNode.class);
+			for (JsonNode reference: node) {
+				JsonNode parts = reference.get("parts");
+				String owner = parts.get(0).toString();
+				String project = parts.get(1).toString();
+				String issueNumString = parts.get(2).toString().replaceAll("[^0-9]+", "");
+				String rev = parts.get(3).toString();
+
+				long issuenum = Long.parseLong(issueNumString);
+				
+				String issueIdentifier = GithubConverterUtil.standardIssueIdentifier(owner + "/" + project, issuenum);
+				DiscoursePart issueDP = getDiscoursePart(discourse, issueIdentifier, DiscoursePartTypes.GITHUB_ISSUE);
+				DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(actor, issueDP, DiscoursePartInteractionTypes.REFER);
+				
+				AnnotationInstance crossref = annotationService.createTypedAnnotation("CrossrefFrom");
+				annotationService.addAnnotation(dpi, crossref);
+				annotationService.addFeature(crossref,  annotationService.createTypedFeature(source, "Source"));
+			}
+		} catch (JsonProcessingException je) {
+			logger.error( "Could not parse " +refinfo + " from " + source + ": "+ je.getMessage() );
+		} catch (IOException e) {
+			logger.error( "Could not parse " +refinfo + " from " + source +  ": "+ e.getMessage() );
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	
 	/**
 	 * Maps a post to DiscourseDB entities.
 	 * 
@@ -700,34 +738,42 @@ public class GithubConverterService{
 		
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
+		User actor = getUser(curDiscourse, actorname);
+		
+		addCrossrefs(p.getIssues(), p.getIssueIdentifier(), curDiscourse, actor);
+		
 		switch (p.getRectype()) {
 		case "pull_request_commit": 
 		case "commit_messages": {
-			User actor = getUser(curDiscourse, actorname);
-			
-			Content k = contentService.createContent();	
-			k.setAuthor(actor);
-			k.setStartTime(p.getTime());
-			
-			if (p.getTitle() != null && p.getTitle().length() > 255) {
-				logger.info("Title too long " + p.getTitle() );
-				k.setTitle(sanitizeUtf8mb4(p.getTitle()).substring(0, 254));
+			String dataSourceString = StringUtils.left(p.getProjectFullName() + "#" + p.getAction(), 94);
+			Optional<Contribution> oc = contributionService.findOneByDataSource(dataSourceString, COMMIT_SHA, "GITHUB");
+			Contribution co = null;
+			if (oc.isPresent()) {
+				co = oc.get();
 			} else {
-				k.setTitle(sanitizeUtf8mb4(p.getTitle()));
-			}
-			
-			k.setText(sanitizeUtf8mb4(p.getText()));
-			Contribution co = contributionService.createTypedContribution(ContributionTypes.GIT_COMMIT_MESSAGE);
-			co.setCurrentRevision(k);
-			co.setFirstRevision(k);
-			co.setStartTime(p.getTime());
+				Content k = contentService.createContent();	
+				k.setAuthor(actor);
+				k.setStartTime(p.getTime());
+				
+				if (p.getTitle() != null && p.getTitle().length() > 255) {
+					logger.info("Title too long " + p.getTitle() );
+					k.setTitle(sanitizeUtf8mb4(p.getTitle()).substring(0, 254));
+				} else {
+					k.setTitle(sanitizeUtf8mb4(p.getTitle()));
+				}
+				
+				k.setText(sanitizeUtf8mb4(p.getText()));
+				co = contributionService.createTypedContribution(ContributionTypes.GIT_COMMIT_MESSAGE);
+				co.setCurrentRevision(k);
+				co.setFirstRevision(k);
+				co.setStartTime(p.getTime());
+				dataSourceService.addSource(co, new DataSourceInstance(dataSourceString,  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
+			} 
 			extendDiscoursePartDates(issueDP, p.getTime());
 			discoursePartService.addContributionToDiscoursePart(co, issueDP);
-			dataSourceService.addSource(co, new DataSourceInstance(StringUtils.left(p.getProjectFullName() + "#" + p.getAction(), 94),  COMMIT_SHA, DataSourceTypes.GITHUB, "GITHUB"));
 			return co.getId();
 		}
 		case "issue_title": {
-			User actor = getUser(curDiscourse, actorname);
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
@@ -751,21 +797,18 @@ public class GithubConverterService{
 			return co.getId();
 		}
 		case "issue_closed": {
-			User actor = getUser(curDiscourse, p.getActor());
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(actor, issueDP, DiscoursePartInteractionTypes.GITHUB_ISSUE_CLOSE);
 			extendDiscoursePartDates(issueDP, p.getTime());
 			dpi.setStartTime(p.getTime());
 			return 0L;
 		}
 		case "pull_request_merged": {
-			User actor = getUser(curDiscourse, p.getActor());
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(actor, issueDP, DiscoursePartInteractionTypes.GIT_PULL_REQUEST_MERGE);
 			extendDiscoursePartDates(issueDP, p.getTime());
 			dpi.setStartTime(p.getTime());
 			return 0L;
 		}
 		case "issue_comment": {
-			User actor = getUser(curDiscourse, p.getActor());
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
 			k.setStartTime(p.getTime());
@@ -828,11 +871,15 @@ public class GithubConverterService{
 		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
 		String actorname = p.getActor();
 		if (actorname == null) { actorname = "unknown"; }
+		User actor = getUser(curDiscourse, actorname);
+		
+		addCrossrefs(p.getIssues(), p.getIssueIdentifier(), curDiscourse, actor);
+		
 		switch (p.getRectype()) {
 		
 		case "pull_request_commit_comment":
 		case "commit_comments": {
-			User actor = getUser(curDiscourse, actorname);
+
 			
 			Content k = contentService.createContent();	
 			k.setAuthor(actor);
