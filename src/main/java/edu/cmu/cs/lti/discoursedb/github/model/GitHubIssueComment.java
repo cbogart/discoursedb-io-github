@@ -13,6 +13,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import edu.cmu.cs.lti.discoursedb.github.converter.GithubConverterUtil;
+
 /**
  * Simple PoJo to represent rows in GitHub issue extracts in CSV format.<br/>
  * Expects files with the following header:<br/>
@@ -71,11 +73,8 @@ public class GitHubIssueComment {
 	}
 	
 	public String getIssueIdentifier() {
-		if (getIssueid() == 0) {
-			return getProjectFullName() + " commit messages";
-		} else {
-			return "Issue " + getProjectFullName() + "#" + getIssueid();			
-		}
+		return GithubConverterUtil.standardIssueIdentifier(getProjectFullName(), getIssueid());
+		
 	}
 	
 	public String getProjectFullName() {
