@@ -99,8 +99,6 @@ public class GithubConverterService{
 	@Autowired private AnnotationService annotationService;
 	
 	private HashMap<String,Long> keyIndex = new HashMap<String,Long>();
-	private HashMap<String,Long> dpKeyIndex = new HashMap<String,Long>();
-	private HashMap<String,Long> userKeyIndex = new HashMap<String,Long>();
 	private Discourse theDiscourse = null;
 	private boolean globalTransaction = false;
 	
@@ -110,15 +108,45 @@ public class GithubConverterService{
 		} 
 		return theDiscourse;
 	}
+
+	
+	private HashMap<String,Long> dpKeyIndex = new HashMap<String,Long>();	
 	private DiscoursePart getDiscoursePart(Discourse d, String name, DiscoursePartTypes typ) {
-		return discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
+		String dpKey = name + " xx " + typ.name();
+		if (dpKeyIndex.containsKey(dpKey)) {
+			Optional<DiscoursePart> mayfind = discoursePartService.findOne(dpKeyIndex.get(dpKey));
+			if (mayfind.isPresent()) {
+				return mayfind.get();
+			}
+		}
+		
+		DiscoursePart dp = discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
+		dpKeyIndex.put(dpKey, dp.getId());
+		return dp;
 	}
+
+	
+	private HashMap<String,Long> userKeyIndex = new HashMap<String,Long>();	
+	private User getUser(Discourse d, String username) {
+		String uKey = d.getName()  +" xx " + username;
+		if (userKeyIndex.containsKey(uKey)) {
+			Optional<User> mayfind = userService.findOne(userKeyIndex.get(uKey));
+			if (mayfind.isPresent()) {
+				return mayfind.get();
+			}
+		}
+		
+		User u = userService.createOrGetUser(d, username);
+		userKeyIndex.put(uKey, u.getId());
+		return u;
+	}
+	
+	
+	
 	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, DataSourceTypes sourceType, String datasetName) {
 		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, sourceType, datasetName);
 	}
-	private User getUser(Discourse d, String username) {
-		return userService.createOrGetUser(d, username);
-	}
+	
 	
 	
 	/**
@@ -212,7 +240,7 @@ public class GithubConverterService{
 	Set<String> alreadyDegenerateProject = new HashSet<String>();
 	
 	public User ensureUserExists(String actor, Set<String> users, Discourse curDiscourse) {
-		User curUser = userService.createOrGetUser(curDiscourse, actor);
+		User curUser = getUser(curDiscourse, actor);
 		if (!users.contains(actor) && !alreadyDegenerateUser.contains(actor)) {
 			// Mark as degenerate
 			AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
@@ -222,7 +250,7 @@ public class GithubConverterService{
 		return curUser;
 	}
 	public DiscoursePart ensureProjectExists(String projectname, Set<String> projects, Discourse curDiscourse) {
-		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
+		DiscoursePart projectDP = getDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
 		if (!projects.contains(projectname) && !alreadyDegenerateProject.contains(projectname)) {
 			// mark as degenerate
 			AnnotationInstance dgen = annotationService.createTypedAnnotation("Degenerate");
@@ -374,7 +402,7 @@ public class GithubConverterService{
 		// Because project commit comments are handled elsewhere
 		
 		Discourse curDiscourse = getDiscourse("Github");
-		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, cce.getProject(), DiscoursePartTypes.GITHUB_REPO);
+		DiscoursePart projectDP = getDiscoursePart(curDiscourse, cce.getProject(), DiscoursePartTypes.GITHUB_REPO);
 		
 		if (   users.contains(cce.getActor()) && !  projects.contains(cce.getProject()) ) {
 			User curUser = ensureUserExists(cce.getActor(), users, curDiscourse);
@@ -383,9 +411,6 @@ public class GithubConverterService{
 			k.setAuthor(curUser);
 			k.setStartTime(cce.getCreatedAt());
 			
-			//if (cc.contains("👍")) {
-			//	k.setText(StringEscapeUtils.escapeJava(cce.getCommitComment()));
-			//} else {
 			k.setText(sanitizeUtf8mb4(cce.getCommitComment()));
 			Contribution co = contributionService.createTypedContribution(ContributionTypes.GITHUB_COMMIT_COMMENT);
 			co.setCurrentRevision(k);
@@ -418,7 +443,7 @@ public class GithubConverterService{
 		// Only do this if EITHER the user OR the project are already in the database
 		
 		Discourse curDiscourse = getDiscourse("Github");
-		DiscoursePart projectDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, ges.getProject(), DiscoursePartTypes.GITHUB_REPO);
+		DiscoursePart projectDP = getDiscoursePart(curDiscourse, ges.getProject(), DiscoursePartTypes.GITHUB_REPO);
 		AnnotationInstance extsite = annotationService.createTypedAnnotation("ExternalSite");
 		annotationService.addAnnotation(projectDP, extsite);
 		annotationService.addFeature(extsite,  annotationService.createTypedFeature(ges.getSiteType(), "external_site_type"));
@@ -729,9 +754,9 @@ public class GithubConverterService{
 	public long mapIssueEntities(GitHubIssueComment p) {				
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 
-		if (p.getText() == null || p.getText() == "") {
-			return 0L;
-		}
+		//if (p.getText() == null || p.getText() == "") {
+		//	return 0L;
+		//}
 		Discourse curDiscourse = getDiscourse("Github");
 		
 		DiscoursePart issueDP = getDiscoursePart(curDiscourse, p.getIssueIdentifier(), DiscoursePartTypes.GITHUB_ISSUE);
@@ -941,7 +966,7 @@ public class GithubConverterService{
 
 				User curUser = ensureUserExists(pe.getActor(), users, curDiscourse);
 				DiscoursePart curProject = ensureProjectExists(pe.getProject(), projects, curDiscourse);
-				DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse,
+				DiscoursePart curPush = getDiscoursePart(curDiscourse,
 						pushname, DiscoursePartTypes.GIT_PUSH);
 
 				logger.info("Found " + commits.size() + " commits for " + pushname);
@@ -965,7 +990,7 @@ public class GithubConverterService{
 		if (   users.contains(pe.getActor()) ||  projects.contains(pe.getProject()) ) {
 			User curUser = ensureUserExists(pe.getActor(), users, curDiscourse);
 			DiscoursePart curProject = ensureProjectExists(pe.getProject(), projects, curDiscourse);
-			DiscoursePart curPush = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse,
+			DiscoursePart curPush = getDiscoursePart(curDiscourse,
 					"Push by " + pe.getActor() + " at " + pe.getCreatedAt().toString(),
 					DiscoursePartTypes.GIT_PUSH);
 			curPush.setStartTime(pe.getCreatedAt());
@@ -1013,6 +1038,10 @@ public class GithubConverterService{
 		// NO DATA SOURCE		
 	}
 	
+	
+	
+	
+	
 	/*
 	 * Represent a unique wiki page or the like that can have
 	 * updates over time.
@@ -1025,7 +1054,7 @@ public class GithubConverterService{
 		if (   users.contains(ge.getActor()) ||  projects.contains(ge.getProject()) ) {
 			User curUser = ensureUserExists(ge.getActor(), users, curDiscourse);
 			DiscoursePart projectDP = ensureProjectExists(ge.getProject(), projects, curDiscourse);
-			DiscoursePart wikiDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, ge.getProject() + "/wiki", 
+			DiscoursePart wikiDP = getDiscoursePart(curDiscourse, ge.getProject() + "/wiki", 
 					DiscoursePartTypes.GITHUB_WIKI);
 			Contribution con = null;
 			Content c = contentService.createContent();
@@ -1075,7 +1104,7 @@ public class GithubConverterService{
 		Assert.notNull(p,"Cannot map relations for post. Post data was null.");
 		
 		Discourse curDiscourse = discourseService.createOrGetDiscourse("Github");
-		DiscoursePart forumDP = discoursePartService.createOrGetTypedDiscoursePart(curDiscourse, p.getFullForumName(), DiscoursePartTypes.FORUM);
+		DiscoursePart forumDP = getDiscoursePart(curDiscourse, p.getFullForumName(), DiscoursePartTypes.FORUM);
 		String actorname = p.getAuthorName(); // THIS IS WRONG -- map to username first.
 		
 		
