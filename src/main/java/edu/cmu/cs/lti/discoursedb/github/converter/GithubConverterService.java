@@ -24,7 +24,7 @@ import org.springframework.util.Assert;
 
 import edu.cmu.cs.lti.discoursedb.core.model.TimedAnnotatableSourcedBE;
 import edu.cmu.cs.lti.discoursedb.core.model.TypedTimedAnnotatableSourcedBE;
-import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationAggregate;
+//import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationAggregate;
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.AnnotationInstance;
 import edu.cmu.cs.lti.discoursedb.core.model.annotation.Feature;
 //import edu.cmu.cs.lti.discoursedb.core.model.annotation.FeatureType;
@@ -106,8 +106,10 @@ public class GithubConverterService{
 	private DiscoursePart getDiscoursePart(Discourse d, String name, DiscoursePartTypes typ) {
 		return discoursePartService.createOrGetTypedDiscoursePart(d, name, typ);
 	}
-	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, DataSourceTypes sourceType, String datasetName) {
-		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, sourceType, datasetName);
+	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, 
+			DataSourceTypes sourceType, String datasetName, DiscoursePartTypes type) {
+		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, 
+				sourceType, datasetName, type);
 	}
 	private User getUser(Discourse d, String username) {
 		return userService.createOrGetUser(d, username);
@@ -473,7 +475,7 @@ public class GithubConverterService{
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		DiscoursePart forumDP = getDiscoursePart(curDiscourse, posting.getFullForumName(), DiscoursePartTypes.FORUM);
-		DiscoursePart threadDP = getDiscoursePartByDataSource(curDiscourse, posting.getForumThreadIdentifier(), "ggroups:forum/threadid", DataSourceTypes.GITHUB, dataSourceName);
+		DiscoursePart threadDP = getDiscoursePartByDataSource(curDiscourse, posting.getForumThreadIdentifier(), "ggroups:forum/threadid", DataSourceTypes.GITHUB, dataSourceName, DiscoursePartTypes.THREAD);
 		if (posting.getResponseTo() == "") {
 			discoursePartService.createDiscoursePartRelation(forumDP, threadDP, DiscoursePartRelationTypes.SUBPART);
 		}
