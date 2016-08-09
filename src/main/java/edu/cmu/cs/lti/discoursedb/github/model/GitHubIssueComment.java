@@ -37,6 +37,7 @@ public class GitHubIssueComment {
 	private String action;
 	private String title;
 	private String provenance;
+	private String paths;
 	private boolean plusOne;
 	private List<String> urls;
 	private String issues;
@@ -162,6 +163,14 @@ public class GitHubIssueComment {
 
 	public void setActor(String actor) {
 		this.actor = actor;
+	}
+
+	public String getPaths() {
+		return paths;
+	}
+
+	public void setPaths(String paths) {
+		this.paths = paths;
 	}
 	
 	

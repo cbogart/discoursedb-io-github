@@ -143,8 +143,8 @@ public class GithubConverterService{
 	
 	
 	
-	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, DataSourceTypes sourceType, String datasetName) {
-		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, sourceType, datasetName);
+	private DiscoursePart getDiscoursePartByDataSource(Discourse d, String entitySourceId, String entitySourceDescriptor, DataSourceTypes sourceType, String datasetName, DiscoursePartTypes dptype) {
+		return discoursePartService.createOrGetDiscoursePartByDataSource(d,entitySourceId, entitySourceDescriptor, sourceType, datasetName, dptype);
 	}
 	
 	
@@ -171,7 +171,7 @@ public class GithubConverterService{
 	 * 
 	 * @param The User object to test
 	 */
-	public boolean isDegenerateU(TimedAnnotatableSourcedBE source) {
+	@Deprecated public boolean isDegenerateU(TimedAnnotatableSourcedBE source) {
 		if (source == null || source.getAnnotations() == null || source.getAnnotations().getAnnotations() == null ) {
 			return false;
 		}
@@ -190,7 +190,7 @@ public class GithubConverterService{
 	 * 
 	 * @param The DiscoursePart object to test
 	 */
-	public boolean isDegenerateDp(TypedTimedAnnotatableSourcedBE source) {
+	@Deprecated public boolean isDegenerateDp(TypedTimedAnnotatableSourcedBE source) {
 		if (source == null || source.getAnnotations() == null || source.getAnnotations().getAnnotations() == null ) {
 			return false;
 		}
@@ -221,14 +221,14 @@ public class GithubConverterService{
 	}
 
 	
-	public Set<String> getNondegenerateUsers() {
+	@Deprecated public Set<String> getNondegenerateUsers() {
 		Set<String> users = new HashSet<String>();
 		for (User u: userService.findUsersWithoutAnnotation("Degenerate")) {
 			users.add(u.getUsername());
 		}
 		return users;
 	}
-	public Set<String> getNondegenerateProjects() {
+	@Deprecated public Set<String> getNondegenerateProjects() {
 		Set<String> projects = new HashSet<String>();
 		for (DiscoursePart dp:  discoursePartService.findDiscoursePartsWithoutAnnotation("Degenerate")) {
 			projects.add(dp.getName());
@@ -236,9 +236,23 @@ public class GithubConverterService{
 		return projects;
 	}
 	
-	Set<String> alreadyDegenerateUser = new HashSet<String>();
-	Set<String> alreadyDegenerateProject = new HashSet<String>();
+	@Deprecated Set<String> alreadyDegenerateUser = new HashSet<String>();
+	@Deprecated Set<String> alreadyDegenerateProject = new HashSet<String>();
 	
+	public User ensureUserExistsDegenerate(String actor, Set<String> users, Discourse curDiscourse, Discourse degenerate) {
+		if (!users.contains(actor)) {
+			return getUser(degenerate, actor);
+		} else {
+			return getUser(curDiscourse, actor);
+		}
+	}
+	public DiscoursePart ensureProjectExistsDegenerate(String projectname, Set<String> projects, Discourse curDiscourse, Discourse degenerate) {
+		if (!projects.contains(projectname)) {
+			return getDiscoursePart(degenerate, projectname, DiscoursePartTypes.GITHUB_REPO);
+		} else {
+			return getDiscoursePart(curDiscourse, projectname, DiscoursePartTypes.GITHUB_REPO);
+		}
+	}
 	public User ensureUserExists(String actor, Set<String> users, Discourse curDiscourse) {
 		User curUser = getUser(curDiscourse, actor);
 		if (!users.contains(actor) && !alreadyDegenerateUser.contains(actor)) {
@@ -274,10 +288,10 @@ public class GithubConverterService{
 		// Only do this if EITHER the user OR the project are already in the database
 		
 		Discourse curDiscourse = getDiscourse("Github");
-		
+		Discourse degenerate = getDiscourse("Degenerate");
 		if (   users.contains(actor) ||  projects.contains(projectname) ) {
-			User curUser = ensureUserExists(actor, users, curDiscourse);
-			DiscoursePart projectDP = ensureProjectExists(projectname, projects, curDiscourse);
+			User curUser = ensureUserExistsDegenerate(actor, users, curDiscourse, degenerate);
+			DiscoursePart projectDP = ensureProjectExistsDegenerate(projectname, projects, curDiscourse, degenerate);
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, eventtype);
 			dpi.setStartTime(when);
 		}
@@ -305,10 +319,15 @@ public class GithubConverterService{
 					DiscoursePartInteractionTypes.CREATE
 					:DiscoursePartInteractionTypes.DELETE;
 			DiscoursePartInteraction dpi = userService.createDiscoursePartInteraction(curUser, projectDP, dpitype);
-			if (cde.getWhat() != null) {
+			if (cde.getWhat() != null && cde.getWhat() != "") {
 				AnnotationInstance kind = annotationService.createTypedAnnotation("ArtifactAffected");
-				annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getWhat(), "ArtifactName"));
+				if (cde.getWhatType() == "repository") {
+					annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getProject(), "ArtifactName"));
+				} else if (cde.getWhat() != null) {
+					annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getWhat(), "ArtifactName"));
+				}
 				annotationService.addFeature(kind, annotationService.createTypedFeature(cde.getWhatType(), "ArtifactType"));
+				annotationService.addAnnotation(dpi, kind);
 			}
 			dpi.setStartTime(cde.getCreatedAt());
 		}
@@ -337,6 +356,7 @@ public class GithubConverterService{
 			if (fe.getForkedTo() != null) {
 				AnnotationInstance kind = annotationService.createTypedAnnotation("ForkedTo");
 				annotationService.addFeature(kind, annotationService.createTypedFeature(fe.getForkedTo(), "ForkedToProject"));
+				annotationService.addAnnotation(dpi, kind);
 			}
 			dpi.setStartTime(fe.getCreatedAt());
 		}
@@ -505,7 +525,8 @@ public class GithubConverterService{
 		
 		Discourse curDiscourse = getDiscourse("Github");
 		DiscoursePart forumDP = getDiscoursePart(curDiscourse, posting.getFullForumName(), DiscoursePartTypes.FORUM);
-		DiscoursePart threadDP = getDiscoursePartByDataSource(curDiscourse, posting.getForumThreadIdentifier(), "ggroups:forum/threadid", DataSourceTypes.GITHUB, dataSourceName);
+		DiscoursePart threadDP = getDiscoursePartByDataSource(curDiscourse, posting.getForumThreadIdentifier(), 
+				"ggroups:forum/threadid", DataSourceTypes.GITHUB, dataSourceName, DiscoursePartTypes.THREAD);
 		if (posting.getResponseTo() == "") {
 			discoursePartService.createDiscoursePartRelation(forumDP, threadDP, DiscoursePartRelationTypes.SUBPART);
 		}
@@ -692,7 +713,6 @@ public class GithubConverterService{
 		try {
 			DiscoursePart dps = getDiscoursePart(getDiscourse("Github"), name, DiscoursePartTypes.GITHUB_REPO);
 			AnnotationInstance a = annotationService.createTypedAnnotation("MATRIX_FACTORIZATION");
-			annotationService.addAnnotation(dps, a);
 			annotationService.addFeature(a,  annotationService.createTypedFeature(factorizationName, "name"));
 			dataSourceService.addSource(a, new DataSourceInstance(factorConfig +"#" + name, "factorization_config_file", DataSourceTypes.GITHUB, "GITHUB"));
 			for(String factorname: factors.keySet()) {
@@ -1066,12 +1086,24 @@ public class GithubConverterService{
 				con = contributionService.createTypedContribution(ContributionTypes.WIKI_PAGE);
 				con.setStartTime(ge.getCreatedAt());
 				con.setFirstRevision(c);  // ASSUMPTION: they come in chronologically
+				con.setCurrentRevision(c);
 				AnnotationInstance ai = annotationService.createTypedAnnotation("URL_WITH_REVISIONS");
 				if (ge.getHtmlUrl() != null && ge.getHtmlUrl() != "") {
-					annotationService.addFeature(ai, annotationService.createTypedFeature(ge.getHtmlUrl(), "LOCAL_URL"));
-					dataSourceService.addSource(con, new DataSourceInstance(ge.getHtmlUrl() + "#" + ge.getSha(), 
+					String html = ge.getHtmlUrl();
+					String default_prefix = "https://github.com/" + ge.getProject();
+					if (html.startsWith(default_prefix)) {
+						html = html.substring(default_prefix.length(), html.length());
+					}
+					annotationService.addFeature(ai, annotationService.createTypedFeature(html, "LOCAL_URL"));
+					String src = html + "#" + ge.getSha();
+					if (src.length() > 95) {
+						logger.warn("SOURCE STRING TOO LONG: " + src);
+						src = src.substring(0, 95);
+					}
+					dataSourceService.addSource(con, new DataSourceInstance(src, 
 							"local_url#sha", DataSourceTypes.GITHUB, "GITHUB"));
 				}
+				annotationService.addAnnotation(con,  ai);
 			} else {
 				con = contributionService.findOne(context_map.get(ge.getHtmlUrl())).get();
 				con.getCurrentRevision().setNextRevision(c);

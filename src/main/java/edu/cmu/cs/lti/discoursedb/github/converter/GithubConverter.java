@@ -190,9 +190,9 @@ public class GithubConverter implements CommandLineRunner {
 		if (env.containsProperty("gitdata.project_events")) {
 			logger.info("Add events that concern users and projects");
 			
-			File f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/commit_comment_events.csv").toFile();
-			processCommitCommentEvents(f, users, projects, commit_shas);
-			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/push_events.csv").toFile();
+			//File f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/commit_comment_events.csv").toFile();
+			//processCommitCommentEvents(f, users, projects, commit_shas);
+			File f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/push_events.csv").toFile();
 			processPushEvents(f, users, projects);
 			f = Paths.get(env.getRequiredProperty("gitdata.project_events") + "/create_events.csv").toFile();
 			processCreateDeleteEntity(f, users, projects);
